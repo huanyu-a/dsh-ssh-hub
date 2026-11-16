@@ -22,18 +22,22 @@
 
 基座还提供：持久连接池（空闲 30 分钟断开）、`~/.ssh/config` 导入、ProxyJump / ProxyCommand 跳板、PTY Web 终端（多标签 / 分离重连 / 2FA）、SFTP。
 
-### 本插件新增（8 个工具）
+### 本插件新增（9 个工具）
 
 | 工具 | 用途 |
 | --- | --- |
 | `hub_inspect` | 运行内置巡检项并留存本轮结果 |
 | `hub_inspect_catalog` | 列出可用巡检项与阈值 |
 | `hub_inspect_diff` | 对比上一轮：值漂移 / 新增超限 / 已恢复 |
+| `hub_monitor` | 报告定时监控是否在跑、间隔、覆盖台数、上一轮与下一轮时间 |
 | `hub_alerts` | 查看告警状态与最近事件 |
 | `hub_alert_rules` | 列出 / 调整告警规则 |
 | `hub_alert_test` | 测试通知渠道（区分"规则没触发"与"渠道坏了"） |
 | `hub_deploy` | 分批部署 + 健康检查 + 自动回滚 |
 | `hub_log_search` | 跨机检索 journald / 日志目录 |
+
+> `hub_monitor` 存在的原因：监控**未启动**和机群**全部健康**都会表现为"告警列表为空"，
+> 而这两件事的含义相反。问一句"有没有东西在看"要先于"有没有问题"。
 
 ### 内置巡检项
 
@@ -118,6 +122,54 @@ npm run check                  # typecheck + test + build + pack 校验
 | `knownHostsPath` | `""` | 空 = `~/.ssh/known_hosts` |
 | `encryptCredentials` | `false` | 是否加密凭据落盘 |
 | `auditEnabled` | `true` | 是否写审计日志 |
+| `monitorEnabled` | `false` | 是否启动定时监控循环 |
+| `monitorIntervalMs` | `60000` | 监控间隔（10000–3600000） |
+| `monitorChecks` | `""` | 逗号分隔的巡检项；空 = 全部 |
+
+> **`monitorEnabled` 默认关闭**。一个插件刚加载就自主探测你所有服务器的定时器是个惊喜，
+> 不是功能。开启是显式决策。未开启时面板与 `hub_monitor` 都会明说"没有东西在检查"，
+> 以免"安静的告警列表"被误读成"机群健康"。
+
+主密钥来自 `DSH_SSH_HUB_SECRET`（环境变量）或 `DSH_SSH_HUB_SECRET_FILE`（文件路径，
+读取后去掉一个结尾换行）。**没有默认值**——一个内置的默认主密钥等于没有加密。
+加密需要 `encryptCredentials` 与主密钥**同时**具备：只给密钥不改开关，不会悄悄改写
+一个操作者没选择加密的存储；只改开关不给密钥，就不能加密。
+
+---
+
+## 监控与面板
+
+定时循环由 DSH 的 `timer` 服务驱动（`inject` 里是**硬依赖**：若允许 `setInterval` 兜底，
+插件卸载后探针定时器会泄漏）。
+
+一轮的行为边界：
+
+- 上一轮未结束 → 下一轮跳过，并记录跳过原因（不是静默丢弃）
+- 没有需要巡检的主机 → 跳过，原因如实记录
+- 某台主机连不上 → 该台记为**盲探针**（`value: null` + `error`），其余照跑；
+  一台机器重启不会让整个机群失去监控
+- 通知渠道抛错 → 吞掉，循环存活（通知失败不该等于监控停摆）
+
+指标分级落盘：`raw`(24h) → `1m`(30d) → `15m`(90d) → `1h`(永久)。滚动聚合按
+`metric|at` 键合并，重复聚合不会产生重复桶；盲探针不进均值，只有盲探针的桶
+`value: null` 但样本数照记。
+
+面板新增第 6 个页签「机群」：监控武装状态 → 上一轮超限/盲探针 → 与上一轮的变化集 →
+告警状态与事件 → 磁盘趋势迷你图 → 安全态势。页签里**没有**启停监控的按钮：
+那是带审计痕迹的配置决策，不该由一个面板按钮代劳。唯一的动作是「立即巡检」，
+它走的路径和定时器完全相同。
+
+7 条新路由（均只应答本机回环，非回环 403）：
+
+```
+GET  /api/dsh-ssh/monitor            监控状态
+POST /api/dsh-ssh/monitor/tick       手动触发一轮（与定时器同一条路径）
+GET  /api/dsh-ssh/inspection         最近轮次（limit 1–50，最新在前）
+GET  /api/dsh-ssh/inspection/diff    与上一轮的变化
+GET  /api/dsh-ssh/alerts             告警状态与最近 50 条事件
+GET  /api/dsh-ssh/metrics            某主机的指标序列（需 alias，tier 校验，limit 1–2000）
+GET  /api/dsh-ssh/security           加密/指纹策略/审计的当前态势
+```
 
 ---
 
@@ -129,7 +181,7 @@ src/
   engine.ts             SSH 引擎（连接池 / exec / cluster / 隧道 / SFTP）
   store.ts              主机存储（凭据加解密）
   tools.ts              基座 6 个工具（+ 脱敏 + 审计）
-  routes.ts             /api/dsh-ssh 路由族
+  routes.ts             /api/dsh-ssh 路由族（含监控 7 条）
   security/
     known-hosts.ts      known_hosts 解析、指纹、校验策略
     secrets.ts          凭据加密信封
@@ -139,8 +191,11 @@ src/
     recorder.ts         审计记录器
   inspect/
     checks.ts           巡检项定义与判定
-    inspection.ts       巡检执行与结果留存
+    inspection.ts       巡检执行与结果留存（单台失败不拖垮整轮）
     tools.ts            巡检工具
+  monitor/
+    loop.ts             定时监控循环（重叠保护 / 幂等启停 / 有界事件流）
+    metrics.ts          raw/1m/15m/1h 四级指标落盘与滚动聚合
   alerting/
     rules.ts            告警状态机
     notify.ts           模板化通知（Bark / Telegram / 飞书 / 企微）
@@ -151,7 +206,12 @@ src/
   logs/
     search.ts           跨机日志检索
     tools.ts            日志工具
-tests/                  148 个测试
+  client/panel/
+    FleetTab.tsx        第 6 个页签：机群
+scripts/
+  verify-monitor.mjs    装好后对运行中的插件做端到端验收
+  verify-ssh2-import.mjs 独立证明 ssh2 的 CJS 导入形式在真实 node 里可用
+tests/                  199 个测试
 ```
 
 ---
@@ -159,9 +219,25 @@ tests/                  148 个测试
 ## 测试
 
 ```
-Test Files  9 passed (9)
-     Tests  148 passed (148)
+Test Files  13 passed (13)
+     Tests  199 passed (199)
 ```
+
+其中 `tests/ssh-e2e.test.ts` 会起一个**真实的 ssh2 服务端**（自签 RSA 主机密钥、
+口令认证、exec 通道），验证连接/认证/执行/连接池复用/集群顺序/完整一轮巡检/
+主机指纹三策略。它不是 mock 掉传输层，而是真的过一遍 SSH 握手——
+"命令字符串拼对了"和"远程真的收到这条命令"是两件事。
+
+两个脚本是可执行的验收门，不是文档示例：
+
+```
+node scripts/verify-ssh2-import.mjs   # 证明 CJS 导入形式在真实 node 进程里能构造并连接
+node scripts/verify-monitor.mjs       # 对运行中的插件跑完整监控链路（需 DSH 在跑）
+```
+
+`verify-ssh2-import.mjs` 有必要单独存在：vitest 走 Vite 的 CJS 互操作，
+所以测试全绿**不能**证明 esbuild 的 ESM 产物里能拿到 `ssh2.Client`。
+这个区别是实测踩出来的（见 DESIGN.md 风险表）。
 
 ---
 

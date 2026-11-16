@@ -225,6 +225,98 @@ export type TerminalClientFrame =
   /** End the session outright (the view's disconnect control). */
   | { type: 'close' }
 
+// ---------------------------------------------------------- monitoring faces
+//
+// These mirror the shapes the monitoring routes return. They are declared
+// here rather than in the client so the host's route handlers and the
+// panel's readers agree on one definition — a display change that renames a
+// field would otherwise silently blank a column instead of failing the build.
+
+/** One check result as the panel reads it. */
+export interface CheckResultRow {
+  checkId: string
+  alias: string
+  value: number | boolean | string | null
+  breached: boolean
+  raw: string
+  error?: string
+}
+
+/** One retained inspection round. */
+export interface InspectionRound {
+  startedAt: number
+  durationMs: number
+  targets: string[]
+  results: CheckResultRow[]
+}
+
+/** One host's change between the two most recent rounds. */
+export interface HostChange {
+  alias: string
+  checkId: string
+  title: string
+  before?: string
+  after: string
+  stateChange?: 'new-breach' | 'recovered'
+}
+
+/** The monitoring loop's health. */
+export interface MonitorStatus {
+  enabled: boolean
+  running: boolean
+  intervalMs?: number
+  hosts?: number
+  lastRoundAt?: number
+  nextTickAt?: number
+  lastTick?: MonitorTickResult
+  reason?: string
+}
+
+/** One round's outcome as the loop recorded it. */
+export interface MonitorTickResult {
+  at: number
+  ran: boolean
+  hosts: number
+  breaches: number
+  blind: number
+  skippedBecause?: string
+}
+
+/** One alert state row. */
+export interface AlertStateRow {
+  ruleId: string
+  alias: string
+  state: 'ok' | 'pending' | 'firing' | 'frozen'
+  consecutiveBreaches?: number
+  lastValue?: string
+  lastFiredAt?: number
+}
+
+/** One alert event. */
+export interface AlertEventRow {
+  ruleId: string
+  alias: string
+  kind: 'trigger' | 'recover'
+  value: string
+  at: number
+}
+
+/** One aggregated metric bucket. */
+export interface MetricBucketRow {
+  at: number
+  metric: string
+  value: number | null
+  samples: number
+}
+
+/** The live security posture. */
+export interface SecurityStatus {
+  encryptConfigured: boolean
+  secret: { available: boolean; source: 'env' | 'file' | 'none' }
+  hostKeyPolicy?: string
+  auditEnabled?: boolean
+}
+
 /** Route paths the client calls (shared literals). */
 export const SSH_API_BASE = '/api/dsh-ssh' as const
 
@@ -239,6 +331,20 @@ export const SSH_API = {
   ls: SSH_API_BASE + '/ls',
   tunnel: SSH_API_BASE + '/tunnel',
   terminal: SSH_API_BASE + '/terminal',
+  /** The monitoring loop's health readout. */
+  monitor: SSH_API_BASE + '/monitor',
+  /** Manual round trigger, the same path the timer takes. */
+  monitorTick: SSH_API_BASE + '/monitor/tick',
+  /** Retained inspection rounds. */
+  inspection: SSH_API_BASE + '/inspection',
+  /** The change set between the two most recent rounds. */
+  inspectionDiff: SSH_API_BASE + '/inspection/diff',
+  /** Alert states and the recent event feed. */
+  alerts: SSH_API_BASE + '/alerts',
+  /** Metric series for one host and tier. */
+  metrics: SSH_API_BASE + '/metrics',
+  /** The live security posture. */
+  security: SSH_API_BASE + '/security',
 } as const
 
 /** NDJSON transfer stream line shapes (upload). */

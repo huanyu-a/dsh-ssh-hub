@@ -9,22 +9,27 @@
  */
 
 import type { Context, Fiber } from '@deepseek-ai/cordis'
+import { readFileSync } from 'node:fs'
 import z from '@deepseek-ai/schemastery'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
+import type {} from '@deepseek-ai/cordis-plugin-timer'
 import { SshEngine } from './engine.ts'
 import { DEFAULT_CONNECT_TIMEOUT_MS } from './engine/connection-pool.ts'
 import { makeRoutes } from './routes.ts'
 import { HostStore, type SecretProtector } from './store.ts'
 import { sshClusterTool, sshDownloadTool, sshExecTool, sshListTool, sshTunnelTool, sshUploadTool } from './tools.ts'
 import { Inspector } from './inspect/inspection.ts'
-import { hubInspectCatalogTool, hubInspectDiffTool, hubInspectTool } from './inspect/tools.ts'
+import { findCheck } from './inspect/checks.ts'
+import { hubInspectCatalogTool, hubInspectDiffTool, hubInspectTool, hubMonitorTool } from './inspect/tools.ts'
 import { AlertEngine } from './alerting/rules.ts'
 import { hubAlertRulesTool, hubAlertsTool, hubAlertTestTool, defaultRules, type AlertEvent } from './alerting/tools.ts'
-import type { NotifyChannel } from './alerting/notify.ts'
+import { notifyAll, type NotifyChannel } from './alerting/notify.ts'
 import { hubDeployTool } from './deploy/tools.ts'
 import { hubLogSearchTool } from './logs/tools.ts'
+import { Monitor } from './monitor/loop.ts'
+import { MetricStore, samplesFromRound } from './monitor/metrics.ts'
 import { mountOnce } from './mount-once.ts'
 import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
 import { defaultKnownHostsPath } from './security/known-hosts.ts'
@@ -35,8 +40,16 @@ import { AuditRecorder } from './audit/recorder.ts'
 /** Stable cordis plugin name. */
 export const name = 'ssh'
 
-/** Services required before the SSH surfaces can mount. */
-export const inject = ['webServer', 'tools', 'systemPrompt']
+/**
+ * Services required before the SSH surfaces can mount.
+ *
+ * `timer` is required rather than optional: the monitoring loop is armed
+ * through it, and a plugin that silently fell back to a bare setInterval
+ * would leave a probe timer running after the plugin unloaded. Requiring it
+ * makes a profile without the timer service fail to activate this row
+ * instead of leaking timers.
+ */
+export const inject = ['webServer', 'tools', 'systemPrompt', 'timer']
 
 declare module '@deepseek-ai/cordis' {
   interface Events {
@@ -94,6 +107,9 @@ export interface ResolvedConfig {
   knownHostsPath?: ConfigField<string>
   encryptCredentials?: ConfigField<boolean>
   auditEnabled?: ConfigField<boolean>
+  monitorEnabled?: ConfigField<boolean>
+  monitorIntervalMs?: ConfigField<number>
+  monitorChecks?: ConfigField<string>
 }
 
 /**
@@ -118,6 +134,12 @@ export const Config = z.object({
     .description('Encrypt stored passwords and key passphrases. Needs DSH_SSH_HUB_SECRET in the environment as the master secret; there is deliberately no default, because a default master secret is a backdoor. With no master secret the secrets stay in plaintext, exactly as before.'),
   auditEnabled: z.boolean().default(true).volatile()
     .description('Record every operation (exec, cluster, transfer, deploy, credential change) in an append-only audit log under $DSH_HOME/dsh-ssh-hub/audit.log. Secrets are redacted before a record is written.'),
+  monitorEnabled: z.boolean().default(false).volatile()
+    .description('Run fleet inspection on a timer and feed the alert rules. Off by default: a monitoring loop that starts probing servers the moment the plugin is enabled is a surprise, and the operator should choose when the fleet starts being watched. Requires at least one configured host.'),
+  monitorIntervalMs: z.number().step(1000).min(10_000).max(3_600_000).default(60_000).volatile()
+    .description('How often the monitor runs an inspection round, in milliseconds. Default 60s. A round that outlasts the interval skips the next tick rather than running two rounds at once.'),
+  monitorChecks: z.string().default('').volatile()
+    .description('Comma-separated check ids the monitor runs (default: all built-in checks). Empty means every check; call hub_inspect_catalog for the ids.'),
 })
 
 /** Schema defaults, re-read for hand-built test contexts (the loader applies them normally). */
@@ -135,23 +157,84 @@ function readConfigField<T>(field: ConfigField<T> | undefined, fallback: T): T {
 }
 
 /**
+ * Parse the comma-separated check list config.
+ *
+ * An empty string means "all checks", not "no checks": an operator who
+ * cleared the field wants the default set, and running zero checks on a
+ * timer would be a monitor that watches nothing.
+ *
+ * @param raw - the config string.
+ * @returns the check ids, or undefined for "all".
+ */
+function parseCheckList(raw: string): string[] | undefined {
+  const ids = raw.split(',').map(id => id.trim()).filter(id => id !== '')
+  return ids.length === 0 ? undefined : ids
+}
+
+/**
  * The master secret used to encrypt stored credentials.
  *
- * The environment variable is the only supported source. It is also the
- * only one that works unattended — a headless profile with no one to type
- * a passphrase. The DSH credentials service was the intended fallback,
- * but it is an async service and this plugin's apply is synchronous, and
- * reading an undeclared service off the context throws at mount time.
- * So: environment variable, and nothing else. With no secret configured
- * the store keeps plaintext, which is exactly what the operator chose by
- * not configuring one.
+ * Two sources, in priority order:
+ *
+ * 1. `DSH_SSH_HUB_SECRET` — the secret itself in the environment.
+ * 2. `DSH_SSH_HUB_SECRET_FILE` — a path to a file containing the secret.
+ *
+ * The second exists because the first is a poor fit for a long-running
+ * desktop profile: an environment variable has to be set in whatever
+ * launches DSH, which means it lands in shell profiles and shortcut
+ * properties, where it is readable by anything running as the same user and
+ * gets copied into screenshots of the launcher. A 0600 file is easier to
+ * protect and easier to back up.
+ *
+ * Neither is a default. With no secret configured the store keeps
+ * plaintext, which is exactly what the operator chose by not configuring
+ * one; a built-in default key would be a backdoor, not a convenience.
+ *
+ * The DSH credentials service was the intended third source, but it is an
+ * async service and this plugin's apply is synchronous, and reading an
+ * undeclared service off the context throws at mount time. A secret that
+ * cannot be read at mount time cannot protect a store that is opened at
+ * mount time.
  *
  * @returns the master secret, or undefined when none is configured.
  */
 function readMasterSecret(): string | undefined {
   const fromEnv = process.env.DSH_SSH_HUB_SECRET
   if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv
-  return undefined
+
+  const filePath = process.env.DSH_SSH_HUB_SECRET_FILE
+  if (filePath === undefined || filePath.trim() === '') return undefined
+  try {
+    const fromFile = readFileSync(filePath.trim(), 'utf8')
+    // A trailing newline is normal in a secret file written by an editor or
+    // by `echo`; keeping it would derive a different key from the same text.
+    const trimmed = fromFile.replace(/\r?\n$/, '')
+    return trimmed !== '' ? trimmed : undefined
+  } catch {
+    // A configured-but-unreadable file is not worth guessing about: fall
+    // through to plaintext (the operator's store was already plaintext or
+    // unopenable) rather than throwing and taking the whole plugin down.
+    return undefined
+  }
+}
+
+/**
+ * Describe where the master secret came from, for the settings panel.
+ *
+ * The panel must be able to tell an operator *whether* encryption is active
+ * and *why not* — "encryptCredentials is on but nothing is encrypted" is
+ * the single most confusing state this plugin can present.
+ *
+ * @returns the source label and whether a secret is available.
+ */
+function masterSecretStatus(): { available: boolean; source: 'env' | 'file' | 'none' } {
+  const fromEnv = process.env.DSH_SSH_HUB_SECRET
+  if (fromEnv !== undefined && fromEnv.trim() !== '') return { available: true, source: 'env' }
+  const filePath = process.env.DSH_SSH_HUB_SECRET_FILE
+  if (filePath !== undefined && filePath.trim() !== '' && readMasterSecret() !== undefined) {
+    return { available: true, source: 'file' }
+  }
+  return { available: false, source: 'none' }
 }
 
 /**
@@ -193,7 +276,7 @@ const SECTION_ORDER = PLUGIN_TOOL_SECTION_ORDERS.ssh
  */
 const SSH_TOOL_NAMES = [
   'ssh_list', 'ssh_exec', 'ssh_upload', 'ssh_download', 'ssh_tunnel', 'ssh_cluster',
-  'hub_inspect', 'hub_inspect_catalog', 'hub_inspect_diff',
+  'hub_inspect', 'hub_inspect_catalog', 'hub_inspect_diff', 'hub_monitor',
   'hub_alerts', 'hub_alert_rules', 'hub_alert_test',
   'hub_deploy', 'hub_log_search',
 ] as const
@@ -206,7 +289,8 @@ export const SSH_GUIDANCE = [
   'ssh_list 列出主机、ssh_exec 执行远程命令、ssh_upload/ssh_download 传输文件、',
   'ssh_tunnel 本地端口转发、ssh_cluster 按 aliases/environment/tags 至少一种非空 selector 集群并发执行；',
   'hub_inspect 运行内置巡检项（磁盘/负载/内存/inode/运行时长/sshd/失败单元/内核）并留存本轮结果，',
-  'hub_inspect_diff 对比上一轮找出变化（值漂移、新增超限、已恢复），hub_inspect_catalog 列出巡检项；',
+  'hub_inspect_diff 对比上一轮找出变化（值漂移、新增超限、已恢复），hub_inspect_catalog 列出巡检项，',
+  'hub_monitor 报告定时监控是否在跑（监控未启动时告警列表为空并不代表机群健康）；',
   'hub_alerts 查看告警状态与事件、hub_alert_rules 调整规则、hub_alert_test 测试通知渠道；',
   'hub_deploy 分批部署并做健康检查、失败自动回滚、跳过未部署主机；',
   'hub_log_search 跨机检索 journald 或日志目录，结果按主机限量并提示截断。',
@@ -274,6 +358,43 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   const alertEvents: AlertEvent[] = []
   const notifyChannels: NotifyChannel[] = []
 
+  // The metric store: tiered history behind the inspection rounds.
+  const metricStore = new MetricStore()
+
+  // The monitoring loop: inspection on a timer, feeding the alert rules.
+  // It is created unconditionally but only armed when the config asks for
+  // it, so the status route can report "configured but off" rather than
+  // making the panel guess why nothing is happening.
+  const monitor = new Monitor(
+    engine,
+    inspector,
+    alertEngine,
+    alertEvents,
+    {
+      intervalMs: readConfigField(config?.monitorIntervalMs, 60_000),
+      checks: parseCheckList(readConfigField(config?.monitorChecks, '')),
+      rules: alertRules,
+      targets: () => store.list().map(host => host.alias),
+    },
+    async (notification) => {
+      await notifyAll(notifyChannels, notification, {
+        '#RULE.NAME#': notification.title,
+        '#STATE#': notification.kind === 'trigger' ? '告警' : '已恢复',
+        '#MESSAGE#': `${notification.alias} ${notification.title}: ${notification.kind === 'trigger' ? '告警' : '已恢复'} (${notification.value})`,
+      })
+    },
+  )
+
+  // Every completed round feeds the metric store, so the history tiers stay
+  // current whether the round came from the timer or from a hub_inspect call.
+  inspector.onRound = (round) => {
+    for (const alias of round.targets) {
+      const results = round.results.filter(result => result.alias === alias)
+      if (results.length === 0) continue
+      metricStore.record(alias, samplesFromRound(round.startedAt, results, checkId => findCheck(checkId)?.kind))
+    }
+  }
+
   const resolve = (): { announceToAgent: boolean; enabled: boolean } => {
     let enabled = readConfigField(config?.enabled, DEFAULT_ENABLED)
     // When dsh-ssh was seeded with enabled: false (e.g. from an aggregate profile
@@ -290,8 +411,26 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   }
 
   // The /api/dsh-ssh route family + terminal upgrade.
-  const { routes, upgrade, terminalSessions } = makeRoutes({ store, engine })
+  const { routes, upgrade, terminalSessions } = makeRoutes({
+    store,
+    engine,
+    monitor,
+    metrics: metricStore,
+    inspector,
+    alerts: alertEngine,
+    alertEvents,
+    security: () => ({
+      // The two conditions that must both hold for credentials to be
+      // encrypted. Reporting them separately is the point: "switch on, no
+      // secret" and "secret present, switch off" need different fixes.
+      encryptConfigured: readConfigField(config?.encryptCredentials, false),
+      secret: masterSecretStatus(),
+      hostKeyPolicy: readConfigField(config?.hostKeyPolicy, 'off'),
+      auditEnabled: readConfigField(config?.auditEnabled, true),
+    }),
+  })
   let disposeRoutes: (() => void) | undefined
+  let disposeMonitor: (() => void) | undefined
 
   // Agent tools + their prompt sections.
   const recorder = new AuditRecorder(audit)
@@ -304,6 +443,7 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
     sshClusterTool(engine, recorder),
     hubInspectTool(engine, inspector),
     hubInspectCatalogTool(),
+    hubMonitorTool(monitor),
     hubInspectDiffTool(inspector),
     hubAlertsTool(alertEngine, alertEvents),
     hubAlertRulesTool(alertRules),
@@ -336,6 +476,13 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
     if (disposeTools !== undefined) {
       disposeTools()
       disposeTools = undefined
+    }
+    // The loop is stopped before the surfaces are re-derived, so a settings
+    // edit cannot leave the old interval running alongside a new one (two
+    // timers would double every probe against the fleet).
+    if (disposeMonitor !== undefined) {
+      disposeMonitor()
+      disposeMonitor = undefined
     }
     if (!value.enabled) return
     if (value.announceToAgent) {
@@ -370,6 +517,16 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
       },
       'dsh-ssh: tools',
     )
+    // Arm the monitoring loop last, so its first round runs against a fully
+    // registered surface. A loop that starts before the tools exist would
+    // record rounds no tool can read.
+    if (readConfigField(config?.monitorEnabled, false)) {
+      monitor.start(ctx.timer)
+      // The loop owns no effect of its own; this one carries the interval
+      // disposer onto the plugin fiber, so disabling the plugin stops the
+      // probing instead of leaving an orphan timer watching the fleet.
+      disposeMonitor = ctx.effect(() => () => { monitor.stop() }, 'dsh-ssh: monitor')
+    }
   }
 
   // A settings edit is committed into this instance's config references and

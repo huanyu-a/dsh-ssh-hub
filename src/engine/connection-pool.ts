@@ -5,7 +5,29 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import type { Duplex } from 'node:stream'
-import { Client, type ConnectConfig } from 'ssh2'
+// ssh2 is a CommonJS package loaded here through an explicit require.
+//
+// Neither a named import nor a default import of it is reliable: under
+// esbuild's ESM output both resolve to undefined at runtime ("Client is not a
+// constructor", then "Ssh2Client is not a constructor" once the default form
+// was tried), because the host bundle is loaded as ESM by a loader whose CJS
+// interop does not synthesise the bindings. createRequire bypasses the
+// interop entirely and returns the real module.exports object, which is the
+// only form that behaves the same under vitest, a plain node process, and the
+// packaged host bundle.
+import { createRequire } from 'node:module'
+import type { Client, ConnectConfig } from 'ssh2'
+
+/** Load a CommonJS package by name, independent of ESM interop. */
+function requireCjs<T>(name: string): T {
+  return createRequire(import.meta.url)(name) as T
+}
+
+/** The ssh2 module namespace. */
+const ssh2 = requireCjs<typeof import('ssh2')>('ssh2')
+
+/** The Client constructor, read off the real CJS export object. */
+const Ssh2Client = ssh2.Client
 import type { ExecResult, SshHostEntry } from '../protocol.ts'
 import { expandHome, normalizeAgentPath, type HostStore } from '../store.ts'
 import { createHostVerifier, type HostKeyPolicy } from '../security/known-hosts.ts'
@@ -232,7 +254,7 @@ export function isReadyTimeout(error: Error): boolean {
 /** Connect one ssh2 client (resolve on ready, reject on error/close). */
 export function connectClient(config: ConnectConfig, onKeyboardInteractive?: KeyboardInteractiveHandler): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const client = new Client()
+    const client = new Ssh2Client()
     let settled = false
     // Key exchange completion is the only public phase boundary ssh2 exposes
     // between "TCP connect / SSH handshake" and "user authentication".

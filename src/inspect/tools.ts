@@ -265,6 +265,77 @@ export function hubInspectDiffTool(inspector: Inspector) {
   })
 }
 
+/**
+ * The monitoring-loop tool: is the fleet being watched, and what did the
+ * last round see?
+ *
+ * This is separate from `hub_inspect` on purpose. `hub_inspect` *runs* a
+ * round; this reports on the loop that runs rounds on its own. An agent
+ * asked "is the fleet being monitored?" must not have to run a round to
+ * answer, because running a round changes the thing being asked about.
+ *
+ * @param monitor - the loop (absent when the plugin mounted without one).
+ * @param store - the host store, for the configured target count.
+ * @returns the tool definition.
+ */
+export function hubMonitorTool(monitor: { status(): Record<string, unknown> } | undefined) {
+  return defineTool({
+    name: 'hub_monitor',
+    description: 'Report whether the fleet monitoring loop is armed: its interval, how many hosts it watches, when the last round ran and when the next one will. An unarmed monitor means an empty alert list means nothing - use this before concluding the fleet is healthy. Pressing Check now in the panel runs the same round this loop runs.',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        properties: {
+          mounted: { type: 'boolean', required: true },
+          running: { type: 'boolean', required: true },
+          summary: { type: 'string', required: true },
+        },
+        additionalProperties: false,
+      },
+      render: (_args, value: { mounted: boolean; running: boolean; summary: string }) =>
+        text(value.summary),
+    },
+    async execute() {
+      if (monitor === undefined) {
+        return {
+          mounted: false,
+          running: false,
+          summary: '监控循环未挂载（插件可能以只读方式运行）。',
+        }
+      }
+      const status = monitor.status()
+      const running = status['running'] === true
+      const lines: string[] = [running ? '监控已启动' : '监控未启动']
+      if (running) {
+        const intervalMs = typeof status['intervalMs'] === 'number' ? status['intervalMs'] : 0
+        const hosts = typeof status['hosts'] === 'number' ? status['hosts'] : 0
+        lines.push(`  间隔 ${Math.round(intervalMs / 1000)}s，覆盖 ${hosts} 台主机`)
+        const last = status['lastTick']
+        if (typeof last === 'object' && last !== null) {
+          const tick = last as Record<string, unknown>
+          if (tick['ran'] === true) {
+            const at = typeof tick['at'] === 'number' ? new Date(tick['at']).toISOString() : '—'
+            lines.push(`  上一轮：${at}，超限 ${String(tick['breaches'] ?? 0)} 项，探针失联 ${String(tick['blind'] ?? 0)} 项`)
+          } else {
+            lines.push(`  上一轮跳过：${String(tick['skippedBecause'] ?? '原因未知')}`)
+          }
+        }
+        const next = status['nextTickAt']
+        if (typeof next === 'number') {
+          lines.push(`  下一轮：${new Date(next).toISOString()}`)
+        }
+      } else {
+        // The distinction matters: a stopped loop and a healthy fleet both
+        // produce an empty alert list, and only one of them is good news.
+        lines.push('  告警列表为空不能说明机群健康——没有任何东西在检查它们。')
+        lines.push('  在设置里打开 monitorEnabled，或调用 hub_inspect 手动跑一轮。')
+      }
+      return { mounted: true, running, summary: lines.join('\n') }
+    },
+  })
+}
+
 /** A stand-in check for a stored result whose check no longer exists. */
 function fallbackCheck(checkId: string): Check {
   return {

@@ -359,6 +359,22 @@
   border-color: var(--dsw-alias-state-warn-primary);
 }
 
+/* The fleet tab distinguishes four alert states and two change directions.
+   `ok`/`fail` above serve the host-test badge; these add the remaining
+   states so a firing or pending alert is not rendered in the neutral colour
+   (an uncoloured badge reads as "nothing to see", which is the one thing a
+   firing alert must never look like). */
+.badge[data-status='error'] {
+  color: var(--dsw-alias-state-error-primary);
+  border-color: var(--dsw-alias-state-error-primary);
+}
+
+.badge[data-status='warn'],
+.badge[data-status='pending'] {
+  color: var(--dsw-alias-state-warn-primary);
+  border-color: var(--dsw-alias-state-warn-primary);
+}
+
 /* --- buttons ------------------------------------------------------------------ */
 
 .primaryButton {

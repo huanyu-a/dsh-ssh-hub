@@ -5,11 +5,19 @@
 
 import {
   SSH_API,
+  type AlertEventRow,
+  type AlertStateRow,
   type ClusterResult,
   type ExecResult,
+  type HostChange,
   type HostPayload,
   type ImportResult,
+  type InspectionRound,
+  type MetricBucketRow,
+  type MonitorStatus,
+  type MonitorTickResult,
   type RemoteDirEntry,
+  type SecurityStatus,
   type SshHostSummary,
   type TerminalClientFrame,
   type TerminalServerFrame,
@@ -308,6 +316,52 @@ export class SshApi {
     })
     const body = await readJson<{ results: ClusterResult[] }>(response)
     return body.results
+  }
+
+  // ---------------------------------------------------------- monitoring
+  /** The loop's health: armed, interval, host count, last tick. */
+  async monitorStatus(): Promise<MonitorStatus> {
+    const response = await fetch(SSH_API.monitor)
+    return await readJson<MonitorStatus>(response)
+  }
+
+  /** Run one round now, through the same path the timer takes. */
+  async monitorTick(): Promise<MonitorTickResult> {
+    const response = await fetch(SSH_API.monitorTick, { method: 'POST' })
+    return await readJson<MonitorTickResult>(response)
+  }
+
+  /** The retained inspection rounds, newest first. */
+  async inspectionRounds(limit = 10): Promise<InspectionRound[]> {
+    const response = await fetch(SSH_API.inspection + query({ limit }))
+    const body = await readJson<{ rounds: InspectionRound[] }>(response)
+    return body.rounds
+  }
+
+  /** What changed between the two most recent rounds. */
+  async inspectionDiff(): Promise<HostChange[]> {
+    const response = await fetch(SSH_API.inspectionDiff)
+    const body = await readJson<{ changes: HostChange[] }>(response)
+    return body.changes
+  }
+
+  /** Alert states plus the recent event feed. */
+  async alerts(): Promise<{ states: AlertStateRow[]; events: AlertEventRow[] }> {
+    const response = await fetch(SSH_API.alerts)
+    return await readJson<{ states: AlertStateRow[]; events: AlertEventRow[] }>(response)
+  }
+
+  /** A metric series for one host and tier. */
+  async metrics(alias: string, tier: string, metric?: string, limit = 120): Promise<MetricBucketRow[]> {
+    const response = await fetch(SSH_API.metrics + query({ alias, tier, metric, limit }))
+    const body = await readJson<{ series: MetricBucketRow[] }>(response)
+    return body.series
+  }
+
+  /** Whether credentials are actually encrypted, and why not when they are not. */
+  async security(): Promise<SecurityStatus> {
+    const response = await fetch(SSH_API.security)
+    return await readJson<SecurityStatus>(response)
   }
 
   // ----------------------------------------------------------------- ls

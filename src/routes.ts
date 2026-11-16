@@ -21,6 +21,11 @@ import { readJsonBody, writeJson } from './http.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import { SSH_API, type HostPayload, type TerminalServerFrame } from './protocol.ts'
 import type { HostStore } from './store.ts'
+import type { Monitor } from './monitor/loop.ts'
+import { TIERS, type MetricStore } from './monitor/metrics.ts'
+import type { Inspector } from './inspect/inspection.ts'
+import type { AlertEngine } from './alerting/rules.ts'
+import type { AlertEvent } from './alerting/tools.ts'
 
 /** Cap on declared upload bodies (staged to disk before SFTP). */
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
@@ -44,6 +49,29 @@ export interface SshRoutesDeps {
   store: HostStore
   /** The engine (ops). */
   engine: SshEngine
+  /** The monitoring loop (status readout). */
+  monitor?: Monitor
+  /** The metric store (history readout). */
+  metrics?: MetricStore
+  /** The inspection history (rounds and diff). */
+  inspector?: Inspector
+  /** The alert engine (rule states). */
+  alerts?: AlertEngine
+  /** The alert event feed. */
+  alertEvents?: AlertEvent[]
+  /**
+   * Report the live security posture (encryption configured vs active).
+   *
+   * A callback rather than a value so the route always reads the current
+   * config: toggling encryptCredentials in settings must be reflected on the
+   * next request, not after a remount.
+   */
+  security?: () => {
+    encryptConfigured: boolean
+    secret: { available: boolean; source: 'env' | 'file' | 'none' }
+    hostKeyPolicy: string
+    auditEnabled: boolean
+  }
   /** Temp dir for upload/download staging (tests inject a sandbox). */
   stagingDir?: string
 /** Upload byte cap override (tests); defaults to MAX_UPLOAD_BYTES. */
@@ -79,6 +107,147 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
   }
 
   const routes: WebRoute[] = [
+    // ---------------------------------------------------------- monitor
+    {
+      // The monitoring loop's own health. The panel's first question about a
+      // quiet fleet is "is anything watching it?", and this answers that
+      // without inferring it from an empty alert list.
+      kind: 'exact',
+      path: '/api/dsh-ssh/monitor',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        if (deps.monitor === undefined) {
+          writeJson(res, 200, { enabled: false, running: false, reason: 'monitor not mounted' })
+          return
+        }
+        writeJson(res, 200, { enabled: true, ...deps.monitor.status() })
+      },
+    },
+    {
+      // Manual round trigger: the same path the timer takes, so the panel's
+      // "check now" cannot produce a different result than the loop.
+      kind: 'exact',
+      path: '/api/dsh-ssh/monitor/tick',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        if (deps.monitor === undefined) {
+          writeJson(res, 200, { ran: false, reason: 'monitor not mounted' })
+          return
+        }
+        // A failure inside the round is reported, not swallowed into a bare
+        // 400: the webserver turns a thrown handler into an empty 400, which
+        // tells an operator nothing about what broke. A manual trigger is a
+        // diagnostic act, so it must say what happened.
+        let tick
+        try {
+          tick = await deps.monitor.tick()
+        } catch (error) {
+          writeJson(res, 500, { ran: false, error: error instanceof Error ? error.message : String(error) })
+          return
+        }
+        // A missing tick means the round did not run, and the reason matters:
+        // "no hosts" and "a round is already in flight" are different
+        // problems with different fixes, and reporting both as the latter
+        // sends the operator looking for a stuck round that does not exist.
+        if (tick === undefined) {
+          const last = deps.monitor.ticks.at(-1)
+          writeJson(res, 200, {
+            ran: false,
+            reason: last?.skippedBecause ?? '既没有需要巡检的主机，也没有正在进行的轮次',
+          })
+          return
+        }
+        writeJson(res, 200, { ...tick })
+      },
+    },
+    {
+      // The recent rounds, newest first, for the inspection history panel.
+      kind: 'exact',
+      path: '/api/dsh-ssh/inspection',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        if (deps.inspector === undefined) {
+          writeJson(res, 200, { rounds: [] })
+          return
+        }
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const limit = Number(queryParam(url, 'limit') ?? '10')
+        const rounds = deps.inspector.read(Number.isFinite(limit) && limit > 0 ? Math.min(limit, 50) : 10)
+        // Newest first: the panel shows the latest round at the top.
+        writeJson(res, 200, { rounds: [...rounds].reverse() })
+      },
+    },
+    {
+      // The change set between the two most recent retained rounds.
+      kind: 'exact',
+      path: '/api/dsh-ssh/inspection/diff',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        if (deps.inspector === undefined) {
+          writeJson(res, 200, { changes: [] })
+          return
+        }
+        writeJson(res, 200, { changes: deps.inspector.diff() })
+      },
+    },
+    {
+      // The alert states and the recent event feed.
+      kind: 'exact',
+      path: '/api/dsh-ssh/alerts',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        writeJson(res, 200, {
+          states: deps.alerts?.list() ?? [],
+          events: (deps.alertEvents ?? []).slice(-50).reverse(),
+        })
+      },
+    },
+    {
+      // The security posture: whether credentials are actually encrypted,
+      // and why not when the switch is on but nothing is encrypted. That
+      // mismatch is the most confusing state this plugin can present, so it
+      // is reported directly rather than left to be inferred.
+      kind: 'exact',
+      path: '/api/dsh-ssh/security',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        const status = deps.security?.()
+        writeJson(res, 200, status ?? { encryptConfigured: false, secret: { available: false, source: 'none' } })
+      },
+    },
+    {
+      // A metric series for one host and tier.
+      kind: 'exact',
+      path: '/api/dsh-ssh/metrics',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        if (deps.metrics === undefined) {
+          writeJson(res, 200, { series: [] })
+          return
+        }
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const alias = queryParam(url, 'alias')
+        if (alias === undefined || alias === '') {
+          writeJson(res, 400, { error: 'alias is required' })
+          return
+        }
+        const tierParam = queryParam(url, 'tier') ?? '1m'
+        const tier = TIERS.find(candidate => candidate.name === tierParam)
+        if (tier === undefined) {
+          writeJson(res, 400, { error: `unknown tier: ${tierParam} (expected raw|1m|15m|1h)` })
+          return
+        }
+        const metric = queryParam(url, 'metric')
+        const limitRaw = Number(queryParam(url, 'limit') ?? '120')
+        const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 2000) : 120
+        writeJson(res, 200, {
+          alias,
+          tier: tier.name,
+          ...(metric !== undefined ? { metric } : {}),
+          series: deps.metrics.series(alias, tier.name, metric, limit),
+        })
+      },
+    },
     // ------------------------------------------------------------ hosts
     {
       kind: 'exact',

@@ -6,7 +6,10 @@
 
 import { existsSync, lstatSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve as resolvePath } from 'node:path'
-import { Client, type SFTPWrapper } from 'ssh2'
+// Type-only: this module never constructs a Client, so it must not emit a
+// runtime import of the CJS package (see connection-pool.ts for why a named
+// value import of ssh2 does not survive bundling).
+import type { Client, SFTPWrapper } from 'ssh2'
 import type { RemoteDirEntry, TransferProgress } from '../protocol.ts'
 import { withClient, type PoolEngine } from './connection-pool.ts'
 

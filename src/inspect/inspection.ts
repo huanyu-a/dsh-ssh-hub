@@ -94,8 +94,29 @@ export class Inspector {
     const results: CheckResult[] = []
     for (const alias of targets) {
       for (const check of checks) {
-        const execResult = await engine.exec(alias, check.command, timeoutMs)
-        results.push(toResult(check, alias, execResult))
+        // One unreachable host must not abort the round.
+        //
+        // An inspection runs on a timer against a whole fleet, and a fleet
+        // always contains at least one machine that is rebooting, firewalled
+        // or powered off. Letting engine.exec's rejection escape here would
+        // take down the entire round — and, since the round is what advances
+        // the alert state, the whole monitoring loop with it. The failure is
+        // recorded as a blind result (value null) against this one check, so
+        // it shows up as "we could not see" rather than as "the fleet is
+        // fine", which is what a missing row would have implied.
+        try {
+          const execResult = await engine.exec(alias, check.command, timeoutMs)
+          results.push(toResult(check, alias, execResult))
+        } catch (error) {
+          results.push({
+            checkId: check.id,
+            alias,
+            value: null,
+            breached: false,
+            raw: '',
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
       }
     }
     const round: InspectionRound = {
@@ -117,7 +138,24 @@ export class Inspector {
     const dir = dirname(this.path)
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 })
     appendFileSync(this.path, JSON.stringify(round) + '\n', { encoding: 'utf8', mode: 0o600 })
+    // Notify the observer after the round is durable: a subscriber that
+    // needs the history (the metric store) must not see a round that a
+    // failed write left out of the file.
+    try {
+      this.onRound?.(round)
+    } catch {
+      // An observer failure is not an inspection failure. Swallowing it
+      // here keeps the round valid for everyone else.
+    }
   }
+
+  /**
+   * Called after every round is durably appended.
+   *
+   * Used by the metric store to derive series from rounds, so the tiers stay
+   * current whether the round came from the timer or from a tool call.
+   */
+  onRound?: (round: InspectionRound) => void
 
   /**
    * Read the most recent rounds, oldest first.

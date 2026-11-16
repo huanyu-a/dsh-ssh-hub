@@ -154,9 +154,11 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | 编号 | 能力 | 交付判据 | 状态 |
 |---|---|---|---|
 | P1-a | 巡检项 + 执行 + 结果留存 + 对比 | 见 P0-d | ✅ |
-| P1-b | 指标采集 + 历史落盘 | CPU/内存/磁盘/负载/网络趋势，按主机留 raw/1m/15m/1h 分级 | ⏸ 未做（巡检项已覆盖水位，趋势分级采集留待 P3） |
+| P1-b | 指标采集 + 历史落盘 | CPU/内存/磁盘/负载趋势按主机留 raw(24h)/1m(30d)/15m(90d)/1h(永久) 四级；滚动聚合幂等；盲探针不进均值 | ✅ 19 测试 |
 | P1-c | 告警规则引擎 + 通知 | 规则含方向/阈值/持续轮数/冷却/范围；null 冻结；通知预设可发；恢复必通知 | ✅ 18 测试 |
 | P1-d | 输出脱敏 | `env` 类命令的密钥不进对话记录 | ✅ 13 测试 |
+| P1-e | 定时监控循环 | `timer` 服务驱动；一轮未结束则跳过下一轮；通知渠道抛错不拖垮循环；`hub_monitor` 报告是否在跑 | ✅ 16 测试 |
+| P1-f | 面板「机群」页签 | 监控武装状态 / 上一轮超限与盲探针 / 变化集 / 告警状态与事件 / 磁盘趋势迷你图 / 安全态势 | ✅ 构建通过 |
 
 ### P2 · 变更与追溯
 
@@ -165,18 +167,21 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | P2-a | 部署编排 | 分批发布 → 健康检查 → 失败自动回滚；无上一版时如实报告不可回滚 | ✅ 15 测试 |
 | P2-b | 跨机日志检索 | 按关键字 + 时间窗跨 N 台 grep，结果按主机聚合 | ✅ 20 测试 |
 
-### P3 · 体验与规模化（未开始）
+### P3 · 体验与规模化（剩余部分）
 
-- 面板页签：巡检历史曲线 / 告警列表 / 部署记录 / 日志检索结果
 - 主机分组视图 / 一键巡检 / 告警到会话（action card 或 followup）
-- 定时任务（cron）驱动巡检与发布 —— 当前巡检由 agent 主动调用触发，没有后台定时器
-- 交互式设定主密码（当前仅支持 `DSH_SSH_HUB_SECRET` 环境变量）
+- 交互式设定主密码（当前支持 `DSH_SSH_HUB_SECRET` 与 `DSH_SSH_HUB_SECRET_FILE`，尚无 GUI 录入）
+- 部署记录页签、日志检索结果页签（监控/巡检/告警页签已完成）
 - >50 台时的分级采集与背压（10–50 台当前规模下优先级低）
 
-> **当前版本的已知边界**：巡检与告警**没有内置定时器**。`hub_inspect` 由 agent 显式调用，
-> 告警状态机随每次巡检轮次推进；想让它自动跑，需要接 DSH 的定时任务或 `cordis-plugin-timer`。
-> 这是有意的取舍：先让语义正确，再加定时器，而不是让一个会自己跑、但判定逻辑还没定型的
-> 定时器在生产环境里制造假告警。
+> **已完成**：定时监控循环（`cordis-plugin-timer` 驱动）、指标四级分级落盘、
+> 面板「机群」页签、主密码文件来源、手动「立即巡检」。
+
+> **当前版本的已知边界**：
+> - 监控循环**默认关闭**（`monitorEnabled: false`）。一个插件刚加载就去探测机群的定时器
+>   是个惊喜，不是功能；开启是显式决策。未开启时告警列表为空**不代表机群健康** ——
+>   面板与 `hub_monitor` 都会把这一点说出来，因为「安静」和「没问题」看起来一样。
+> - 监控循环随插件的 `effect` 卸载而停止，DSH 关闭时不采集，不留孤儿定时器。
 
 ---
 
@@ -190,6 +195,8 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | 巡检/告警的定时器在 DSH 关闭时停止 | 监控断档 | 面板明确显示「采集中/已停止」；DSH 的 `timer` 服务随插件 effect 卸载，不留孤儿定时器 |
 | 部署编排的破坏性操作 | 误伤生产 | 破坏性动作走 DSH 审批（`approval` 服务）；分批 + 健康检查 + 可回滚；生产环境标签需显式确认 |
 | 采集命令在远端执行 | 远端负载 | 采集器是只读 POSIX sh 探针；快/慢两档（SFTP 走 `node:sqlite` 或 JSON 分级落盘） |
+| **一台主机不可达会拖垮整轮巡检** | 机群里有台机器重启/防火墙挡住时，监控循环整体崩掉，且告警列表看起来"正常" | 已修：`Inspector.run` 对每台主机单独 try/catch，失败记为盲结果（`value: null` + `error`），该台不消失、其余照跑。回归测试 3 例锁定 |
+| **`ssh2` 是 CJS，打包后命名导入失效** | `new Client()` 抛 `Client is not a constructor`，所有 SSH 功能全废，且只表现为路由 400 无响应体 | 已修：改用 `createRequire(import.meta.url)('ssh2')` 绕过 ESM 互操作；`scripts/verify-ssh2-import.mjs` 独立证明该形式能在真实 node 进程里构造并连接 |
 
 ---
 
@@ -207,14 +214,19 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | `src/security/{known-hosts,secrets,redact}.ts` | 全新 | D5 / D6 / D8 |
 | `src/audit/{audit-log,recorder}.ts` | 全新 | P0-b |
 | `src/inspect/{checks,inspection,tools}.ts` | 全新 | P0-d |
+| `src/monitor/{loop,metrics}.ts` | 全新 | P1-e / P1-b |
+| `src/client/panel/FleetTab.tsx` | 全新（第 6 个页签） | P1-f |
+| `src/client/panel/{SshPanel.tsx,controller.ts,panel.module.css}` | 加 `fleet` 页签、`badge[data-status]` 的 error/warn/pending 三态 | P1-f |
+| `src/routes.ts` | 新增 7 条路由（monitor / monitor-tick / inspection / inspection-diff / alerts / metrics / security） | P1-e / P1-f |
 | `src/alerting/{rules,notify,tools}.ts` | 全新 | P1-c |
 | `src/deploy/{orchestrator,tools}.ts` | 全新 | P2-a |
 | `src/logs/{search,tools}.ts` | 全新 | P2-b |
 | `cordis.patch.yml` | 新增 | bundle 行（row id `ssh-hub`） |
 | `scripts/package-artifact.mjs`、`scripts/tarball-reader.mjs` | 全新 | 打包产物 SHA 校验 |
+| `scripts/verify-monitor.mjs`、`scripts/verify-ssh2-import.mjs` | 全新 | 装好后对**运行中的插件**做端到端验收，并独立证明 CJS 导入形式可用 |
 
-> `src/client/panel/*` **未改动**：当前版本沿用基座的五个页签（hosts/terminal/transfer/tunnels/cluster），
-> 新能力目前只通过 agent 工具暴露，尚未做面板页签（P3）。
+> 面板不再"未改动"：新增第 6 个「机群」页签（P1-f），其余五个页签沿用基座。
+> 新能力的路由与页签都只在本机回环地址应答，非回环请求返回 403。
 
 ---
 
@@ -222,9 +234,11 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 
 | 层级 | 方法 | 实测结果 |
 |---|---|---|
-| 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机（null 冻结 / 冷却 / 连续轮数）、部署状态机、日志命令构造与解析 | ✅ 148 测试 / 9 文件全绿 |
+| 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机（null 冻结 / 冷却 / 连续轮数）、部署状态机、日志命令构造与解析、指标分级与滚动聚合、监控循环（重叠保护/幂等启停/上界） | ✅ 199 测试 / 13 文件全绿 |
 | 类型 | `tsc --noEmit`（strict）+ `tsc -p tsconfig.build.json` | ✅ 通过 |
-| 契约 | 每个工具必须有 `output: { schema, render }`（缺失会让 cordis 回滚整个 entry，症状是「路由全 401」） | ✅ 14 个工具全部注册 |
-| 打包 | `npm pack` 后解包逐文件比对 SHA-256 | ✅ 58 个文件与磁盘一致 |
-| 运行时 | 装进 desktop profile → `cordis_inspect` 查 Tool 清单 | ✅ 14 个工具在册；`/api/dsh-ssh/hosts` 返回 200；Config 投影 8 个字段 |
-| 真机 SSH | 内嵌 ssh2 Server 跑真实 exec/cluster/巡检 | ⏸ 未做（需要真实 Linux 主机） |
+| 契约 | 每个工具必须有 `output: { schema, render }`（缺失会让 cordis 回滚整个 entry，症状是「路由全 401」） | ✅ 15 个工具全部注册 |
+| 打包 | `npm pack` 后解包逐文件比对 SHA-256 | ✅ 61 个文件与磁盘一致 |
+| 运行时 | 装进 desktop profile → `cordis_inspect` 查 Tool 清单 | ✅ 15 个工具在册（含 `hub_monitor`）；7 条新路由全部 200；Config 投影全部字段 |
+| 真机 SSH | 内嵌 ssh2 Server（真实密钥交换/口令认证/exec）跑 connect/auth/exec/连接池复用/集群顺序/8 项巡检/指纹三策略 | ✅ 11 测试 |
+| CJS 导入 | `scripts/verify-ssh2-import.mjs` 在真实 node 进程里构造 Client、连接、执行 | ✅ 通过（vitest 的 CJS 互操作无法证明这一点，所以单独验证） |
+| 端到端 | `scripts/verify-monitor.mjs`：起假 SSH server → 经插件自己的 API 注册主机 → 触发一轮 → 回读巡检/指标/告警/安全态势 | ✅ 通过 |

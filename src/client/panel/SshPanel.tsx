@@ -13,6 +13,7 @@ import type { SshApi } from '../api.ts'
 import type { PanelController, SshTab } from './controller.ts'
 import { tt, type TerminalFontSource } from './helpers.ts'
 import { ClusterTab } from './ClusterTab.tsx'
+import { FleetTab } from './FleetTab.tsx'
 import { HostsTab } from './HostsTab.tsx'
 import { TerminalTab } from './TerminalTab.tsx'
 import { TransferTab } from './TransferTab.tsx'
@@ -36,6 +37,7 @@ const TABS: ReadonlyArray<{ id: SshTab; label: () => string }> = [
   { id: 'transfer', label: () => tt('tab.transfer') },
   { id: 'tunnels', label: () => tt('tab.tunnels') },
   { id: 'cluster', label: () => tt('tab.cluster') },
+  { id: 'fleet', label: () => tt('tab.fleet') },
 ]
 
 /** The tabbed SSH panel. */
@@ -76,6 +78,7 @@ export function SshPanel({ controller, api, terminalFont }: SshPanelProps) {
         {activeTab === 'transfer' && <TransferTab api={api} />}
         {activeTab === 'tunnels' && <TunnelsTab api={api} active={panelOpen} />}
         {activeTab === 'cluster' && <ClusterTab api={api} />}
+        {activeTab === 'fleet' && <FleetTab api={api} active={panelOpen} />}
       </div>
     </div>
   )
