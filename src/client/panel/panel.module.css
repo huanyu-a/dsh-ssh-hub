@@ -31,8 +31,16 @@
   /* Header and tab strip share the surrounding surface. An inverted dark
      chassis was tried and rejected: next to the rest of the shell it reads as a
      different application bolted into the page. Only the terminal keeps its own
-     dark surface, because a terminal is expected to have one. */
+     dark surface, because a terminal is expected to have one.
+
+     The fills below are MIXES, not bg-layer tokens: in the light skin
+     bg-base, bg-layer-1 and bg-layer-2 all resolve to pure white, so painting
+     the active tab with bg-layer-2 made it indistinguishable from its
+     neighbours. Mixing a little label-primary into transparent produces a
+     visible step on white and on near-black alike, and still follows the theme. */
   --ssh-chrome: var(--dsw-alias-bg-layer-1);
+  --ssh-tab-hover: color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent);
+  --ssh-tab-active: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -133,13 +141,13 @@
 
 .tab:hover {
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--ssh-tab-hover);
 }
 
 .tab[data-active] {
   color: var(--dsw-alias-label-primary);
   font-weight: 650;
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--ssh-tab-active);
 }
 
 .tab[data-active]::after {
@@ -1308,13 +1316,19 @@
   white-space: nowrap;
 }
 
-/* The word says which state it is; colour only reinforces it. */
+/* The word says which state it is; colour only reinforces it.
+   These are TEXT, so they must clear 4.5:1 on BOTH skins. The raw
+   state-success (rgb(34,197,94)) and state-warn (rgb(245,158,11)) tokens are
+   built for fills and dots, not glyphs: as text they measure 2.28:1 and 2.15:1
+   on white. Pulling them 40% toward the primary label (black on the light skin,
+   near-white on the dark one) keeps the hue recognisable while lifting the
+   glyph well past 4.5:1 in both. */
 .tunnelState[data-live='true'] {
-  color: var(--dsw-alias-state-success-primary);
+  color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 60%, var(--dsw-alias-label-primary));
 }
 
 .tunnelState[data-live='false'] {
-  color: var(--dsw-alias-state-error-primary);
+  color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 60%, var(--dsw-alias-label-primary));
 }
 
 .tunnelLabel {
