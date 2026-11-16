@@ -4,8 +4,15 @@
  * each, no runtime identity to share.
  */
 
-/** Authentication flavors a host entry may carry. */
-export type SshAuthKind = 'key' | 'password' | 'agent'
+/**
+ * Authentication flavors a host entry may carry.
+ *
+ * `none` is a real OpenSSH method (`PreferredAuthentications none`): some
+ * sandboxes authenticate by username alone and reject any credential. Refusing
+ * to connect without a stored secret would make such a host permanently
+ * unreachable even though plain `ssh <alias>` works.
+ */
+export type SshAuthKind = 'key' | 'password' | 'agent' | 'none'
 
 /** One stored host entry (the $DSH_HOME/dsh-ssh.json store shape). */
 export interface SshHostEntry {
@@ -22,6 +29,14 @@ export interface SshHostEntry {
     kind: SshAuthKind
     /** Absolute path to the private key for 'key' auth. */
     keyPath?: string
+    /**
+     * Every candidate key, in ssh_config order. OpenSSH tries each
+     * `IdentityFile` until one authenticates, so a host configured with two
+     * keys must not be reduced to the last one — that turns a working
+     * `ssh <alias>` into "All configured authentication methods failed".
+     * `keyPath` stays the primary (first) candidate for older readers.
+     */
+    keyPaths?: string[]
     /** Passphrase for an encrypted key. */
     passphrase?: string
     /** Password for 'password' auth. */
@@ -123,7 +138,14 @@ export interface TransferProgress {
   error?: string
 }
 
-/** One active local port-forward tunnel. */
+/**
+ * One active local port-forward.
+ *
+ * `source` distinguishes a forward this plugin owns from one that already
+ * exists on the machine (`ssh -N -L …` started by hand or by another tool).
+ * Listing only our own forwards made a running tunnel look absent; the
+ * external row is read-only because the process is not ours to kill.
+ */
 export interface TunnelInfo {
   id: string
   alias: string
@@ -133,6 +155,31 @@ export interface TunnelInfo {
   state: 'forwarding' | 'connecting' | 'failed'
   error?: string
   startedAt: number
+  /** Who owns the listener. Absent means 'plugin' (older shape). */
+  source?: 'plugin' | 'external'
+  /** Owning OS process for an external forward. */
+  pid?: number
+  /** True when the local port actually accepts connections right now. */
+  live?: boolean
+  /** The ssh option that created it ('-L', '-R' or '-D'), external forwards only. */
+  kind?: 'local' | 'remote' | 'dynamic'
+}
+
+/**
+ * One ssh_config host that the store does not contain yet.
+ *
+ * The panel shows these so "import" is a decision about visible hosts rather
+ * than a button whose only feedback is a count.
+ */
+export interface LocalConfigHost {
+  alias: string
+  host: string
+  port: number
+  user: string
+  /** What the store would use if this host were imported. */
+  auth: SshAuthKind
+  /** True when the block cannot be imported as-is (wildcard / Match). */
+  skippedReason?: ImportSkipReason
 }
 
 /** One directory listing entry (remote file browser). */
@@ -193,6 +240,13 @@ export interface ImportSkipBlock {
 export interface ImportResult {
   parsed: number
   added: number
+  /**
+   * Existing hosts whose stored shape was corrected from the config — a host
+   * that gained a second candidate key, or one switched to `none` auth. An
+   * "add-only" import cannot repair those, and reporting them as merely
+   * "existing" is what makes a broken host look already imported.
+   */
+  updated: number
   skipped: number
   /** Every skipped block with its reason, in scan order and deduplicated by name. */
   skippedBlocks: ImportSkipBlock[]
@@ -426,6 +480,8 @@ export const SSH_API_BASE = '/api/dsh-ssh' as const
 export const SSH_API = {
   hosts: SSH_API_BASE + '/hosts',
   importSshConfig: SSH_API_BASE + '/hosts/import-ssh-config',
+  /** ssh_config hosts the store does not contain yet (read-only preview). */
+  localConfig: SSH_API_BASE + '/hosts/local-config',
   test: SSH_API_BASE + '/test',
   exec: SSH_API_BASE + '/exec',
   cluster: SSH_API_BASE + '/cluster',

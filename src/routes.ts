@@ -17,6 +17,7 @@ import { WebSocketServer } from 'ws'
 import type { WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { SshEngine } from './engine.ts'
 import { TerminalSessionRegistry } from './engine/terminal-sessions.ts'
+import { discoverExternalTunnels } from './engine/tunnel-discovery.ts'
 import { readJsonBody, writeJson } from './http.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import { SSH_API, type HostPayload, type TerminalServerFrame } from './protocol.ts'
@@ -605,6 +606,18 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
         }
       },
     },
+    {
+      kind: 'exact',
+      path: SSH_API.localConfig,
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        try {
+          writeJson(res, 200, { hosts: store.listLocalConfigHosts() })
+        } catch (error) {
+          writeJson(res, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
     // ------------------------------------------------------------ ops
     {
       kind: 'exact',
@@ -703,7 +716,11 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
         const body = (await readJsonBody(req)) as Record<string, unknown> | null
         const action = typeof body?.action === 'string' ? body.action : ''
         if (action === 'list') {
-          writeJson(res, 200, { tunnels: engine.listTunnels() })
+          const managed = engine.listTunnels()
+          // Forwards started outside this plugin (`ssh -N -L …`) are real and
+          // were invisible: the tab only knew what it had created itself.
+          const external = await discoverExternalTunnels(managed)
+          writeJson(res, 200, { tunnels: [...managed, ...external] })
           return
         }
         if (action === 'start') {

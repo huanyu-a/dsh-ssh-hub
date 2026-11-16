@@ -27,7 +27,8 @@ export function diffTunnels(prev: TunnelInfo[] | null, next: TunnelInfo[]): Tunn
     if (a.id !== b.id || a.alias !== b.alias || a.state !== b.state
       || a.localPort !== b.localPort || a.remoteHost !== b.remoteHost
       || a.remotePort !== b.remotePort || a.startedAt !== b.startedAt
-      || a.error !== b.error) {
+      || a.error !== b.error || a.source !== b.source || a.pid !== b.pid
+      || a.live !== b.live || a.kind !== b.kind) {
       return next
     }
   }
@@ -205,11 +206,37 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
       {error !== null && <div className={css.banner} data-kind="error">{error}</div>}
       {notice !== null && <div className={css.banner} data-kind="ok">{notice}</div>}
       {tunnels !== null && tunnels.length === 0 && <div className={css.empty}>{tt('tunnel.empty')}</div>}
+      {(tunnels ?? []).some(tunnel => tunnel.source === 'external') && (
+        <div className={css.hint}>{tt('tunnel.externalHint')}</div>
+      )}
       <div className={css.tunnelList}>
         {(tunnels ?? []).map(tunnel => (
-          <div key={tunnel.id} className={css.tunnelRow} data-state={tunnel.state}>
-            <span className={css.tunnelLabel}>{tt('tunnel.row', { alias: tunnel.alias, localPort: tunnel.localPort, remoteHost: tunnel.remoteHost, remotePort: tunnel.remotePort })}</span>
-            <button type="button" className={css.ghostButton} onClick={() => { void stopTunnel(tunnel.id) }}>{tt('tunnel.stop')}</button>
+          <div
+            key={tunnel.id}
+            className={css.tunnelRow}
+            data-state={tunnel.state}
+            data-source={tunnel.source ?? 'plugin'}
+          >
+            <span className={css.tunnelLabel}>
+              {tunnel.source === 'external'
+                ? tt('tunnel.externalRow', {
+                  alias: tunnel.alias,
+                  localPort: tunnel.localPort,
+                  remoteHost: tunnel.remoteHost,
+                  remotePort: tunnel.remotePort,
+                  pid: tunnel.pid ?? 0,
+                })
+                : tt('tunnel.row', { alias: tunnel.alias, localPort: tunnel.localPort, remoteHost: tunnel.remoteHost, remotePort: tunnel.remotePort })}
+            </span>
+            {tunnel.source === 'external'
+              ? (
+                <span className={css.tunnelState} data-live={tunnel.live === true ? 'true' : 'false'}>
+                  {tunnel.live === true ? tt('tunnel.externalLive') : tt('tunnel.externalDead')}
+                </span>
+              )
+              : (
+                <button type="button" className={css.ghostButton} onClick={() => { void stopTunnel(tunnel.id) }}>{tt('tunnel.stop')}</button>
+              )}
           </div>
         ))}
       </div>

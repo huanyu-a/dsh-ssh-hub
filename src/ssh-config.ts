@@ -26,6 +26,14 @@ export interface SshBlock {
   pattern: string
   /** Lowercased option key/value pairs; the last occurrence of a key wins. */
   props: Record<string, string>
+  /**
+   * Every value seen for a key that legitimately repeats, in file order.
+   * `IdentityFile` may appear several times and OpenSSH tries each one, so
+   * keeping only the last occurrence silently breaks a host that relies on a
+   * second key — `ssh <alias>` works while this plugin reports "All configured
+   * authentication methods failed".
+   */
+  repeated: Record<string, string[]>
 }
 
 /** One config file read, with every Include expanded in place. */
@@ -136,7 +144,7 @@ export function readSshConfigBlocks(configPath: string): SshConfigRead {
     const key = match[1].toLowerCase()
     const value = match[2].trim()
     if (key === 'host') {
-      current = { pattern: value, props: {} }
+      current = { pattern: value, props: {}, repeated: {} }
       blocks.push(current)
       continue
     }
@@ -147,7 +155,12 @@ export function readSshConfigBlocks(configPath: string): SshConfigRead {
       current = undefined
       continue
     }
-    if (current !== undefined) current.props[key] = value
+    if (current !== undefined) {
+      current.props[key] = value
+      const seen = current.repeated[key]
+      if (seen === undefined) current.repeated[key] = [value]
+      else seen.push(value)
+    }
   }
   return { blocks, skipped }
 }

@@ -29,7 +29,7 @@ const ssh2 = requireCjs<typeof import('ssh2')>('ssh2')
 /** The Client constructor, read off the real CJS export object. */
 const Ssh2Client = ssh2.Client
 import type { ExecResult, SshHostEntry } from '../protocol.ts'
-import { expandHome, normalizeAgentPath, type HostStore } from '../store.ts'
+import { expandHome, keyCandidates, normalizeAgentPath, type HostStore } from '../store.ts'
 import { createHostVerifier, type HostKeyPolicy } from '../security/known-hosts.ts'
 import { startProxyCommand, type ProxyTarget } from './proxy-command.ts'
 
@@ -142,7 +142,13 @@ export function buildConnectConfig(entry: SshHostEntry, sock: ConnectConfig['soc
       onRecord: opts.onHostKeyRecord,
     })
   }
-  if (entry.auth.kind === 'password') {
+  if (entry.auth.kind === 'none') {
+    // OpenSSH's `PreferredAuthentications none`: the server accepts the
+    // username with no credential (some sandboxes bind identity to the user
+    // name). There is nothing to look up, so this must not be rejected for
+    // "missing credential" — it is the configured method.
+    config.authHandler = ['none']
+  } else if (entry.auth.kind === 'password') {
     // A password host with no password cannot authenticate. Saying so beats
     // letting ssh2 report "no authentication methods", which sends the
     // operator looking at the server instead of at the credential store.
@@ -159,13 +165,28 @@ export function buildConnectConfig(entry: SshHostEntry, sock: ConnectConfig['soc
     }
     config.agent = agentPath
   } else {
-    const keyPath = entry.auth.keyPath === undefined ? undefined : expandHome(entry.auth.keyPath)
-    if (keyPath === undefined || !existsSync(keyPath)) {
-      throw new Error('private key not found: ' + (entry.auth.keyPath ?? '(unset)'))
+    // OpenSSH tries every IdentityFile in order and stops at the first key the
+    // server accepts. A host configured with two keys must keep both: honouring
+    // only the last one turns a working `ssh <alias>` into "All configured
+    // authentication methods failed".
+    const configured = keyCandidates(entry)
+    const present = configured.filter(path => existsSync(path))
+    if (present.length === 0) {
+      throw new Error('private key not found: ' + (configured[0] ?? '(unset)'))
     }
-    config.privateKey = readFileSync(keyPath, 'utf8')
-    if (entry.auth.passphrase !== undefined && entry.auth.passphrase !== '') {
-      config.passphrase = entry.auth.passphrase
+    const passphrase = entry.auth.passphrase !== undefined && entry.auth.passphrase !== '' ? entry.auth.passphrase : undefined
+    if (present.length === 1) {
+      config.privateKey = readFileSync(present[0] as string, 'utf8')
+      if (passphrase !== undefined) config.passphrase = passphrase
+    } else {
+      // ssh2 applies the methods in the order given, so the ssh_config order is
+      // preserved and a rejected key is skipped rather than fatal.
+      config.authHandler = present.map(path => ({
+        type: 'publickey' as const,
+        username: entry.user,
+        key: readFileSync(path, 'utf8'),
+        ...(passphrase !== undefined ? { passphrase } : {}),
+      }))
     }
   }
   // Agent forwarding is additive: it never changes how the host

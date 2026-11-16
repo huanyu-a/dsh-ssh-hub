@@ -19,6 +19,7 @@ import {
   type HostPayload,
   type ImportResult,
   type InspectionRound,
+  type LocalConfigHost,
   type MetricBucketRow,
   type MonitorStatus,
   type MonitorTickResult,
@@ -284,6 +285,13 @@ export class SshApi {
     const response = await fetch(SSH_API.importSshConfig, { method: 'POST' })
     const body = await readJson<{ result: ImportResult }>(response)
     return body.result
+  }
+
+  /** ssh_config hosts that are not in the store yet (read-only preview). */
+  async listLocalConfigHosts(): Promise<LocalConfigHost[]> {
+    const response = await fetch(SSH_API.localConfig)
+    const body = await readJson<{ hosts: LocalConfigHost[] }>(response)
+    return body.hosts
   }
 
   // ---------------------------------------------------------------- ops

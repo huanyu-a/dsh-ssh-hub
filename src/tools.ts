@@ -9,6 +9,7 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SshEngine } from './engine.ts'
 import type { ClusterResult, ExecResult, SshAuthKind, SshHostSummary, TunnelInfo } from './protocol.ts'
 import { redactCommand, redactOutput } from './security/redact.ts'
+import { discoverExternalTunnels } from './engine/tunnel-discovery.ts'
 import type { AuditRecorder } from './audit/recorder.ts'
 
 /** One text content block (the only render shape these tools emit). */
@@ -90,7 +91,12 @@ function renderCluster(results: ClusterResult[]): string {
 
 /** One tunnel line. */
 function renderTunnel(tunnel: TunnelInfo): string {
-  return `${tunnel.id} ${tunnel.alias} 127.0.0.1:${tunnel.localPort} -> ${tunnel.remoteHost}:${tunnel.remotePort} [${tunnel.state}]`
+  // An external forward is not ours to stop, and its liveness is a fact worth
+  // stating: "forwarding" alone would hide a declared-but-dead listener.
+  const owner = tunnel.source === 'external'
+    ? ` [external pid ${String(tunnel.pid ?? 0)}${tunnel.live === true ? ', port accepting' : ', port NOT listening'}]`
+    : ' [plugin]'
+  return `${tunnel.id} ${tunnel.alias} 127.0.0.1:${tunnel.localPort} -> ${tunnel.remoteHost}:${tunnel.remotePort} [${tunnel.state}]${owner}`
 }
 
 /** The host-list tool. */
@@ -117,7 +123,7 @@ export function sshListTool(engine: SshEngine) {
                 host: { type: 'string', required: true },
                 port: { type: 'integer', required: true },
                 user: { type: 'string', required: true },
-                auth: { type: 'string', enum: ['key', 'password', 'agent'], required: true },
+                auth: { type: 'string', enum: ['key', 'password', 'agent', 'none'], required: true },
                 keyReady: { type: 'boolean', required: true },
                 proxyJump: { type: 'array', items: { type: 'string' }, required: true },
                 proxyCommandConfigured: { type: 'boolean', required: true },
@@ -360,6 +366,10 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
                 state: { type: 'string', enum: ['forwarding', 'connecting', 'failed'], required: true },
                 error: { type: 'string' },
                 startedAt: { type: 'integer', required: true },
+                source: { type: 'string', enum: ['plugin', 'external'] },
+                pid: { type: 'integer' },
+                live: { type: 'boolean' },
+                kind: { type: 'string', enum: ['local', 'remote', 'dynamic'] },
               },
             },
           },
@@ -379,7 +389,12 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
     },
     async execute(args) {
       if (args.action === 'list') {
-        return { ok: true, tunnels: engine.listTunnels() }
+        const managed = engine.listTunnels()
+        // The same answer the panel gives: a forward started outside this
+        // plugin is still a forward, and reporting "no active tunnels" while
+        // one serves traffic sends the reader looking in the wrong place.
+        const external = await discoverExternalTunnels(managed)
+        return { ok: true, tunnels: [...managed, ...external] }
       }
       if (args.action === 'start') {
         if (args.alias === undefined || args.remotePort === undefined) {

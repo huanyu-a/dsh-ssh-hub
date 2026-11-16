@@ -28,22 +28,11 @@
   --ssh-radius: 5px;
   --ssh-control-height: 32px;
   --ssh-data-face: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  /* The chassis is an intentional inverted island, exactly like the terminal
-     (#0b0e14 with its own light foreground). DSW light/dark tokens swap the
-     meaning of "base" and "label", so a graphite panel with light text cannot
-     be derived from them in both skins at once — mixing them yields light-grey
-     on white in the light skin. Instead the graphite is fixed and only TINTED
-     toward the theme's brand colour, which keeps it dark and readable in both
-     skins while still echoing the active theme. The content area below the
-     chassis still follows the theme normally. */
-  --ssh-rack-fill: color-mix(in srgb, #1b2530 92%, var(--dsw-alias-brand-primary));
-  --ssh-rack-ink: #e6edf3;
-  --ssh-rack-muted: #93a4b5;
-  --ssh-rack-rule: #2e3f4f;
-  /* Rack-local accent. The brand token is near-black in the light skin, which
-     is invisible on graphite (1.19:1). A fixed light coral stays legible on the
-     dark chassis in BOTH skins; it marks interaction only, never health. */
-  --ssh-rack-accent: #f0a48f;
+  /* Header and tab strip share the surrounding surface. An inverted dark
+     chassis was tried and rejected: next to the rest of the shell it reads as a
+     different application bolted into the page. Only the terminal keeps its own
+     dark surface, because a terminal is expected to have one. */
+  --ssh-chrome: var(--dsw-alias-bg-layer-1);
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -59,24 +48,23 @@
 }
 
 .panelHeader {
-  color-scheme: dark;
   display: flex;
   align-items: center;
   gap: 16px;
   flex: none;
-  min-height: 52px;
+  min-height: 48px;
   padding: 0 20px;
-  background: var(--ssh-rack-fill);
-  border-bottom: 1px solid var(--ssh-rack-rule);
+  background: var(--ssh-chrome);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
 }
 
 .panelTitle {
   margin: 0;
   flex: 1;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 650;
-  letter-spacing: 0.02em;
-  color: var(--ssh-rack-ink);
+  letter-spacing: 0.01em;
+  color: var(--dsw-alias-label-primary);
   white-space: nowrap;
 }
 
@@ -86,15 +74,14 @@
   gap: 6px;
   height: 28px;
   padding: 0;
-  color: var(--ssh-rack-muted);
+  color: var(--dsw-alias-label-secondary);
   font-size: 12px;
-  letter-spacing: 0.02em;
   border: none;
   background: transparent;
 }
 
 .backButton:hover:not(:disabled) {
-  color: var(--ssh-rack-ink);
+  color: var(--dsw-alias-brand-primary);
 }
 
 /* --- tab bar ------------------------------------------------------------------
@@ -104,14 +91,13 @@
  */
 
 .tabBar {
-  color-scheme: dark;
   display: flex;
   align-items: stretch;
-  gap: 0;
+  gap: 2px;
   flex: none;
   padding: 0 20px;
-  background: var(--ssh-rack-fill);
-  border-bottom: 1px solid var(--ssh-rack-rule);
+  background: var(--ssh-chrome);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
   overflow-x: auto;
   scroll-padding-inline: 20px;
   scrollbar-width: thin;
@@ -120,52 +106,44 @@
 .tab {
   position: relative;
   min-height: 40px;
-  padding: 0 16px;
+  padding: 0 14px;
   font-size: 12px;
   font-weight: 500;
-  letter-spacing: 0.04em;
-  color: var(--ssh-rack-muted);
+  color: var(--dsw-alias-label-secondary);
   background: transparent;
   border: none;
-  border-left: 1px solid transparent;
-  border-right: 1px solid transparent;
-  border-radius: 0;
+  border-radius: var(--ssh-radius) var(--ssh-radius) 0 0;
   cursor: pointer;
   white-space: nowrap;
   transition: color 140ms ease, background 140ms ease;
 }
 
+/* The underline is the only "selected" signal that survives a busy page, and
+   it sits on the tab bar's own rule so it never boxes the label in. */
 .tab::after {
   content: '';
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 1px;
   background: transparent;
 }
 
-.tab[data-active] {
-  color: var(--ssh-rack-ink);
-  font-weight: 650;
-  border-left-color: var(--ssh-rack-rule);
-  border-right-color: var(--ssh-rack-rule);
-}
-
-/* Active and hover sit on the graphite chassis, so their fills mix a light
-   ink toward transparent — never bg-layer-2, which is near-white in the light
-   skin and would flash a light box behind light text. */
 .tab:hover {
-  color: var(--ssh-rack-ink);
-  background: color-mix(in srgb, #e6edf3 6%, transparent);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .tab[data-active] {
-  background: color-mix(in srgb, #e6edf3 10%, transparent);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 650;
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .tab[data-active]::after {
-  background: var(--ssh-rack-accent);
+  background: var(--dsw-alias-brand-primary);
 }
 
 .panelContent {
@@ -769,9 +747,7 @@
 }
 
 /* Keyboard focus, once, for everything the panel renders. `:focus-visible` so a
-   mouse click does not leave a ring behind. Content uses the brand token; the
-   graphite chassis overrides it with the rack-local light accent, because the
-   brand token is near-black in the light skin and invisible on graphite. */
+   mouse click does not leave a ring behind. */
 .panel button:focus-visible,
 .panel input:focus-visible,
 .panel select:focus-visible,
@@ -781,10 +757,7 @@
   outline-offset: 2px;
 }
 
-.panelHeader button:focus-visible,
-.tabBar button:focus-visible {
-  outline-color: var(--ssh-rack-accent);
-}
+
 
 /* Motion here is feedback, never decoration: honour the system preference. */
 @media (prefers-reduced-motion: reduce) {
@@ -1156,6 +1129,9 @@
   inset: 8px 10px;
 }
 
+/* The placeholder covers the terminal, which is the one surface that is
+   deliberately dark. A themed (light-in-light-skin) overlay here flashed a white
+   block over the dark terminal and read as a rendering bug. */
 .termPlaceholder {
   position: absolute;
   inset: 0;
@@ -1166,8 +1142,8 @@
   padding: 0 24px;
   text-align: center;
   font-size: 12.5px;
-  color: var(--dsw-alias-label-tertiary);
-  background: var(--dsw-alias-bg-base);
+  color: #9fb0c0;
+  background: color-mix(in srgb, #0b0e14 88%, transparent);
 }
 
 /* --- transfer ----------------------------------------------------------------- */
@@ -1315,6 +1291,30 @@
 
 .tunnelRow[data-state='failed'] {
   border-left-color: var(--dsw-alias-state-error-primary);
+}
+
+/* A forward owned by another process: visible, not stoppable from here. The
+   dashed rail says "not mine" without relying on colour. */
+.tunnelRow[data-source='external'] {
+  border-style: dashed;
+  border-left-style: solid;
+  border-left-color: var(--dsw-alias-label-tertiary);
+}
+
+.tunnelState {
+  flex: none;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary);
+  white-space: nowrap;
+}
+
+/* The word says which state it is; colour only reinforces it. */
+.tunnelState[data-live='true'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.tunnelState[data-live='false'] {
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .tunnelLabel {

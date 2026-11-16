@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import type { SshApi } from '../api.ts'
-import type { ImportSkipBlock, ImportSkipReason, SshHostSummary, TestResult } from '../../protocol.ts'
+import type { ImportSkipBlock, ImportSkipReason, LocalConfigHost, SshHostSummary, TestResult } from '../../protocol.ts'
 import type { SshKey } from '../locales.ts'
 import { errorMessage, tt } from './helpers.ts'
 import { HostFormDialog } from './HostFormDialog.tsx'
@@ -81,6 +81,8 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
   const [notice, setNotice] = useState<string | null>(null)
   /** Blocks the last import skipped, with the reason each one was left out. */
   const [importSkips, setImportSkips] = useState<ImportSkipBlock[]>([])
+  /** ssh_config hosts that are not in the store yet. */
+  const [localConfig, setLocalConfig] = useState<LocalConfigHost[]>([])
   const [dialog, setDialog] = useState<DialogState | null>(null)
   const [groupBy, setGroupBy] = useState<HostGroupBy>('none')
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -109,6 +111,22 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
   }, [api])
 
   useEffect(() => { void load() }, [load])
+
+  // What the local ssh config offers but the store lacks. Without this the
+  // panel looks like it never read ~/.ssh/config at all: the hosts are simply
+  // absent and the only clue is a button.
+  const loadLocalConfig = useCallback(async (): Promise<void> => {
+    try {
+      const list = await api.listLocalConfigHosts()
+      if (!mountedRef.current) return
+      setLocalConfig(list.filter(host => host.skippedReason === undefined))
+    } catch {
+      // A missing preview must never break the host list.
+      if (mountedRef.current) setLocalConfig([])
+    }
+  }, [api])
+
+  useEffect(() => { void loadLocalConfig() }, [loadLocalConfig])
 
   // Debounced search: every keystroke re-filters through the API.
   useEffect(() => {
@@ -166,9 +184,15 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
     try {
       const result = await api.importSshConfig()
       if (!mountedRef.current) return
-      setNotice(tt('hosts.imported', { parsed: result.parsed, added: result.added, skipped: result.skipped }))
+      setNotice(tt('hosts.imported', {
+        parsed: result.parsed,
+        added: result.added,
+        updated: result.updated,
+        skipped: result.skipped,
+      }))
       setImportSkips(result.skippedBlocks)
       void load()
+      void loadLocalConfig()
     } catch (cause) {
       if (!mountedRef.current) return
       setError(errorMessage(cause))
@@ -277,6 +301,16 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
         <button type="button" className={css.primaryButton} onClick={() => { setDialog({ mode: 'create' }) }}>{tt('hosts.add')}</button>
         <button type="button" className={css.ghostButton} disabled={importing} onClick={() => { void importConfig() }}>{importing ? tt('common.loading') : tt('hosts.import')}</button>
       </div>
+      {localConfig.length > 0 && (
+        <div className={css.banner} data-kind="info">
+          {tt('hosts.localConfigPending', { count: localConfig.length })}
+          {' '}
+          <span className={css.mono}>{localConfig.slice(0, IMPORT_SKIP_LIMIT).map(host => host.alias).join(', ')}</span>
+          {localConfig.length > IMPORT_SKIP_LIMIT && (
+            <span className={css.cellMuted}>{' '}{tt('import.more', { count: localConfig.length - IMPORT_SKIP_LIMIT })}</span>
+          )}
+        </div>
+      )}
       {notice !== null && <div className={css.banner} data-kind="ok">{notice}</div>}
       {notice !== null && importSkips.length > 0 && (
         <ul className={css.importSkips}>

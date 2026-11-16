@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSyn
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { dshHome } from './dsh-home.ts'
-import type { HostPayload, ImportResult, ImportSkipBlock, ImportSkipReason, SshHostEntry, SshHostSummary } from './protocol.ts'
+import type { HostPayload, ImportResult, ImportSkipBlock, ImportSkipReason, LocalConfigHost, SshHostEntry, SshHostSummary } from './protocol.ts'
 import { readSshConfigBlocks } from './ssh-config.ts'
 import { isSealed } from './security/secrets.ts'
 
@@ -60,7 +60,13 @@ export function validateHostPayload(payload: unknown): string | undefined {
   const auth = p.auth as Record<string, unknown> | undefined
   if (auth !== undefined) {
     if (typeof auth !== 'object' || auth === null) return 'auth must be an object'
-    if (auth.kind !== 'key' && auth.kind !== 'password' && auth.kind !== 'agent') return 'auth.kind must be key, password or agent'
+    if (auth.kind !== 'key' && auth.kind !== 'password' && auth.kind !== 'agent' && auth.kind !== 'none') {
+      return 'auth.kind must be key, password, agent or none'
+    }
+    if (auth.keyPaths !== undefined
+      && (!Array.isArray(auth.keyPaths) || auth.keyPaths.some(entry => typeof entry !== 'string' || entry.trim() === ''))) {
+      return 'auth.keyPaths must be an array of non-empty strings'
+    }
     if (auth.kind === 'key' && (typeof auth.keyPath !== 'string' || auth.keyPath.trim() === '')) {
       return 'auth.keyPath is required for key auth'
     }
@@ -203,8 +209,11 @@ export class HostStore {
   /** Secret-free projection for the browser and agent surfaces. */
   summarize(entry: SshHostEntry): SshHostSummary {
     let keyReady = true
-    if (entry.auth.kind === 'key' && entry.auth.keyPath) {
-      keyReady = existsSync(expandHome(entry.auth.keyPath))
+    if (entry.auth.kind === 'key') {
+      // One usable candidate is enough: OpenSSH tries the list in order and
+      // stops at the first key that authenticates.
+      const candidates = keyCandidates(entry)
+      keyReady = candidates.some(path => existsSync(expandHome(path)))
     } else if (entry.auth.kind === 'agent') {
       keyReady = false
     }
@@ -251,6 +260,9 @@ export class HostStore {
       auth: {
         kind: payload.auth.kind,
         keyPath: payload.auth.kind === 'key' ? expandHome(payload.auth.keyPath?.trim() ?? '') : undefined,
+        keyPaths: payload.auth.kind === 'key' && payload.auth.keyPaths !== undefined
+          ? payload.auth.keyPaths.map(path => expandHome(path.trim())).filter(path => path !== '')
+          : undefined,
         passphrase: payload.auth.kind === 'key' ? payload.auth.passphrase ?? undefined : undefined,
         password: payload.auth.kind === 'password' ? payload.auth.password : undefined,
         agentPath: payload.auth.kind === 'agent' ? normalizeAgentPath(payload.auth.agentPath) : undefined,
@@ -316,7 +328,13 @@ export class HostStore {
     if (patch.user !== undefined) entry.user = patch.user.trim()
     if (patch.auth !== undefined) {
       const auth = patch.auth
-      if (auth.kind !== 'key' && auth.kind !== 'password' && auth.kind !== 'agent') throw new Error('auth.kind must be key, password or agent')
+      if (auth.kind !== 'key' && auth.kind !== 'password' && auth.kind !== 'agent' && auth.kind !== 'none') {
+        throw new Error('auth.kind must be key, password, agent or none')
+      }
+      if (auth.keyPaths !== undefined
+        && (!Array.isArray(auth.keyPaths) || auth.keyPaths.some(entry => typeof entry !== 'string' || entry.trim() === ''))) {
+        throw new Error('auth.keyPaths must be an array of non-empty strings')
+      }
       if (auth.kind === 'key' && (typeof auth.keyPath !== 'string' || auth.keyPath.trim() === '')) {
         throw new Error('auth.keyPath is required for key auth')
       }
@@ -334,6 +352,11 @@ export class HostStore {
       entry.auth = {
         kind: auth.kind,
         keyPath: auth.kind === 'key' ? expandHome(auth.keyPath?.trim() ?? '') : undefined,
+        keyPaths: auth.kind === 'key'
+          ? (auth.keyPaths !== undefined
+            ? auth.keyPaths.map(path => expandHome(path.trim())).filter(path => path !== '')
+            : (keyChanged ? undefined : entry.auth.keyPaths))
+          : undefined,
         passphrase: auth.kind === 'key'
           ? (auth.passphrase !== undefined ? auth.passphrase : (keyChanged ? undefined : entry.auth.passphrase))
           : undefined,
@@ -381,7 +404,7 @@ export class HostStore {
     // Per-run statistics: a later import must not report earlier runs' skips.
     this.skippedBlocks = []
     const configPath = this.sshConfigOverride ?? sshConfigPath()
-    if (!existsSync(configPath)) return { parsed: 0, added: 0, skipped: 0, skippedBlocks: [] }
+    if (!existsSync(configPath)) return { parsed: 0, added: 0, updated: 0, skipped: 0, skippedBlocks: [] }
     const { blocks, skipped } = readSshConfigBlocks(configPath)
     this.skippedBlocks = [...skipped]
     const skip = (name: string, reason: ImportSkipReason): void => {
@@ -390,14 +413,11 @@ export class HostStore {
       this.skippedBlocks.push({ name, reason })
     }
     let added = 0
+    let updated = 0
     for (const block of blocks) {
       const pattern = block.pattern.split(/\s+/)[0]
       if (pattern.includes('*') || pattern.includes('?')) {
         skip(pattern, 'wildcard')
-        continue
-      }
-      if (this.list().some(entry => entry.alias === pattern)) {
-        skip(pattern, 'existing')
         continue
       }
       // A block without HostName is a usable OpenSSH entry: the Host pattern
@@ -405,22 +425,43 @@ export class HostStore {
       const hostName = block.props.hostname !== undefined && block.props.hostname !== ''
         ? block.props.hostname
         : pattern
+      // OpenSSH tries every IdentityFile in order; collapsing the list to one
+      // key is what made a working `ssh <alias>` fail here.
+      const identityFiles = (block.repeated.identityfile ?? [])
+        .map(path => expandHome(path.trim()))
+        .filter(path => path !== '')
+      const agentValue = block.props.identityagent
+      const agentUsable = agentValue !== undefined && agentValue.toLowerCase() !== 'none'
+      // `PreferredAuthentications none` means the server authenticates on the
+      // username alone and every credential is rejected. Treating that as
+      // "password required" made the host permanently unconnectable.
+      const prefersNoneOnly = prefersNone(block.props.preferredauthentications)
+      const existing = this.list().find(entry => entry.alias === pattern)
+      if (existing !== undefined) {
+        // A host that is already stored can still be wrong: it may predate
+        // multi-key support (one key of two) or the `none` method. Add-only
+        // import called those "existing" and left them broken forever.
+        if (this.reconcileExisting(existing, identityFiles, prefersNoneOnly)) updated += 1
+        else skip(pattern, 'existing')
+        continue
+      }
       const payload: HostPayload = {
         alias: pattern,
         host: hostName,
         port: block.props.port !== undefined ? Number.parseInt(block.props.port, 10) : 22,
         user: block.props.user ?? process.env.USER ?? 'root',
         auth: {
-          kind: block.props.identityfile !== undefined
+          kind: identityFiles.length > 0
             ? 'key'
-            : block.props.identityagent !== undefined && block.props.identityagent.toLowerCase() !== 'none'
+            : agentUsable
               ? 'agent'
-              : 'password',
-          keyPath: block.props.identityfile,
+              : prefersNoneOnly
+                ? 'none'
+                : 'password',
+          keyPath: identityFiles[0],
+          keyPaths: identityFiles.length > 1 ? identityFiles : undefined,
           password: block.props.password,
-          agentPath: block.props.identityagent !== undefined && block.props.identityagent.toLowerCase() !== 'none'
-            ? normalizeAgentPath(block.props.identityagent)
-            : undefined,
+          agentPath: agentUsable ? normalizeAgentPath(agentValue) : undefined,
         },
         proxyJump: block.props.proxyjump !== undefined
           ? block.props.proxyjump.split(',').map(hop => hop.trim()).filter(hop => hop !== '')
@@ -440,7 +481,107 @@ export class HostStore {
         skip(pattern, 'invalid')
       }
     }
-    return { parsed: blocks.length, added, skipped: this.skippedBlocks.length, skippedBlocks: [...this.skippedBlocks] }
+    return {
+      parsed: blocks.length,
+      added,
+      updated,
+      skipped: this.skippedBlocks.length,
+      skippedBlocks: [...this.skippedBlocks],
+    }
+  }
+
+  /**
+   * ssh_config hosts that this store does not contain yet.
+   *
+   * The import button used to be the only signal that local config exists, and
+   * its only feedback was a count in a notice. Listing the candidates makes the
+   * gap visible before the click, which is the difference between "the panel
+   * cannot read my SSH config" and "these three hosts are waiting to be added".
+   * @returns unimported hosts in file order, with what the import would use.
+   */
+  listLocalConfigHosts(): LocalConfigHost[] {
+    const configPath = this.sshConfigOverride ?? sshConfigPath()
+    if (!existsSync(configPath)) return []
+    const { blocks } = readSshConfigBlocks(configPath)
+    const known = new Set(this.list().map(entry => entry.alias))
+    const out: LocalConfigHost[] = []
+    for (const block of blocks) {
+      const pattern = block.pattern.split(/\s+/)[0]
+      if (pattern === '') continue
+      if (pattern.includes('*') || pattern.includes('?')) {
+        out.push({ alias: pattern, host: block.props.hostname ?? pattern, port: 22, user: '', auth: 'key', skippedReason: 'wildcard' })
+        continue
+      }
+      if (known.has(pattern)) continue
+      const identityFiles = (block.repeated.identityfile ?? []).filter(path => path.trim() !== '')
+      const agentValue = block.props.identityagent
+      const agentUsable = agentValue !== undefined && agentValue.toLowerCase() !== 'none'
+      const port = block.props.port !== undefined ? Number.parseInt(block.props.port, 10) : 22
+      out.push({
+        alias: pattern,
+        host: block.props.hostname !== undefined && block.props.hostname !== '' ? block.props.hostname : pattern,
+        port: Number.isInteger(port) && port >= 1 && port <= 65535 ? port : 22,
+        user: block.props.user ?? '',
+        auth: identityFiles.length > 0
+          ? 'key'
+          : agentUsable
+            ? 'agent'
+            : prefersNone(block.props.preferredauthentications)
+              ? 'none'
+              : 'password',
+      })
+    }
+    return out
+  }
+
+  /**
+   * Correct an already-stored host from its ssh_config block.
+   *
+   * Only the two shapes that silently break a working `ssh <alias>` are
+   * repaired, and only when the stored value is strictly missing information —
+   * never to undo a deliberate user edit:
+   *   1. a key host that the config gives more candidate keys than it stores;
+   *   2. a host that stores `password` with no password while the config asks
+   *      for the `none` method.
+   * @param existing - the stored entry.
+   * @param identityFiles - every IdentityFile from the block, in order.
+   * @param prefersNone - whether the block asks for the `none` method.
+   * @returns true when the entry was changed.
+   */
+  private reconcileExisting(existing: SshHostEntry, identityFiles: string[], prefersNone: boolean): boolean {
+    if (existing.auth.kind === 'none') return false
+    if (existing.auth.kind === 'password'
+      && prefersNone
+      && (existing.auth.password === undefined || existing.auth.password === '')) {
+      try {
+        this.update(existing.alias, { auth: { kind: 'none' } })
+        return true
+      } catch {
+        return false
+      }
+    }
+    if (existing.auth.kind !== 'key' || identityFiles.length === 0) return false
+    const stored = keyCandidates(existing)
+    const missing = identityFiles.filter(path => !stored.includes(path))
+    if (missing.length === 0) return false
+    // Config order wins: OpenSSH tries the file list top-down.
+    const merged: string[] = []
+    for (const path of [...identityFiles, ...stored]) {
+      if (!merged.includes(path)) merged.push(path)
+    }
+    try {
+      this.update(existing.alias, {
+        auth: {
+          kind: 'key',
+          keyPath: merged[0],
+          keyPaths: merged,
+          passphrase: existing.auth.passphrase,
+        },
+      })
+      return true
+    } catch {
+      return false
+    }
   }
 
   private skippedBlocks: ImportSkipBlock[] = []
@@ -549,6 +690,44 @@ export function normalizeProxyCommand(raw: string | undefined): string | undefin
 export function parseForwardAgentValue(raw: string | undefined): boolean {
   const value = raw?.trim().toLowerCase()
   return value === 'yes' || value === 'true' || value === 'on'
+}
+
+/**
+ * Every private key this entry may authenticate with, in try order.
+ *
+ * `keyPaths` (the whole IdentityFile list) wins when present; older entries
+ * store only `keyPath`. Duplicates are dropped so a config that repeats the
+ * same path does not pay for a second handshake.
+ * @param entry - a stored host entry (secrets irrelevant).
+ * @returns candidate key paths, possibly empty.
+ */
+export function keyCandidates(entry: { auth: { keyPath?: string; keyPaths?: string[] } }): string[] {
+  const list = entry.auth.keyPaths !== undefined && entry.auth.keyPaths.length > 0
+    ? entry.auth.keyPaths
+    : entry.auth.keyPath !== undefined
+      ? [entry.auth.keyPath]
+      : []
+  const unique: string[] = []
+  for (const path of list) {
+    const expanded = expandHome(path.trim())
+    if (expanded !== '' && !unique.includes(expanded)) unique.push(expanded)
+  }
+  return unique
+}
+
+/**
+ * Whether an ssh_config `PreferredAuthentications` list offers `none`.
+ *
+ * `none` is a real method: the client asks the server to accept the username
+ * with no credential, which some sandboxes do. An absent value means `none` was
+ * not requested, so callers must not infer it.
+ * @param raw - the raw option value, if any.
+ * @returns true when the method list contains `none`.
+ */
+export function prefersNone(raw: string | undefined): boolean {
+  const value = raw?.trim().toLowerCase()
+  if (value === undefined || value === '') return false
+  return value.split(',').map(part => part.trim()).includes('none')
 }
 
 /** Expand a leading `~` in a filesystem path. */
