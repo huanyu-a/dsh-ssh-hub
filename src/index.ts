@@ -18,6 +18,8 @@ import { DEFAULT_CONNECT_TIMEOUT_MS } from './engine/connection-pool.ts'
 import { makeRoutes } from './routes.ts'
 import { HostStore, type SecretProtector } from './store.ts'
 import { sshClusterTool, sshDownloadTool, sshExecTool, sshListTool, sshTunnelTool, sshUploadTool } from './tools.ts'
+import { Inspector } from './inspect/inspection.ts'
+import { hubInspectCatalogTool, hubInspectDiffTool, hubInspectTool } from './inspect/tools.ts'
 import { mountOnce } from './mount-once.ts'
 import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
 import { defaultKnownHostsPath } from './security/known-hosts.ts'
@@ -215,6 +217,9 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   })
   ctx.effect(() => () => { engine.dispose() }, 'dsh-ssh: engine')
 
+  // The inspection layer: retained rounds of the built-in fleet checks.
+  const inspector = new Inspector()
+
   const resolve = (): { announceToAgent: boolean; enabled: boolean } => {
     let enabled = readConfigField(config?.enabled, DEFAULT_ENABLED)
     // When dsh-ssh was seeded with enabled: false (e.g. from an aggregate profile
@@ -242,6 +247,9 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
     sshDownloadTool(engine),
     sshTunnelTool(engine),
     sshClusterTool(engine),
+    hubInspectTool(engine, inspector),
+    hubInspectCatalogTool(),
+    hubInspectDiffTool(inspector),
   ]
   let disposeTools: (() => void) | undefined
 
