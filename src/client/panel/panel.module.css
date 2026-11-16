@@ -9,12 +9,12 @@
  * so there is no injected entry row to style either.
  */
 
-/* --- panel frame --------------------------------------------------------------
+/* ---panel frame --------------------------------------------------------------
  *
- * The panel reads as an operations console, not a web page: one accent, quiet
- * surfaces, and monospace for anything a machine produces (hostnames, ports,
- * users, paths). Spacing is on a 4px rhythm so controls line up without
- * per-component nudging.
+ * Rack-instrument visual system. The navigation, controls and ledger are a
+ * single instrument rather than a page containing unrelated web widgets.
+ * Every colour remains a shell token: the rack is a surface treatment, not a
+ * second theme, so the light and dark palettes both remain in force.
  */
 
 .view {
@@ -24,114 +24,148 @@
 }
 
 .panel {
+  --ssh-unit: 4px;
+  --ssh-radius: 5px;
+  --ssh-control-height: 32px;
+  --ssh-data-face: "Cascadia Code", "SFMono-Regular", Consolas, monospace;
+  /* The chassis is an intentional inverted island, exactly like the terminal
+     (#0b0e14 with its own light foreground). DSW light/dark tokens swap the
+     meaning of "base" and "label", so a graphite panel with light text cannot
+     be derived from them in both skins at once — mixing them yields light-grey
+     on white in the light skin. Instead the graphite is fixed and only TINTED
+     toward the theme's brand colour, which keeps it dark and readable in both
+     skins while still echoing the active theme. The content area below the
+     chassis still follows the theme normally. */
+  --ssh-rack-fill: color-mix(in srgb, #1b2530 92%, var(--dsw-alias-brand-primary));
+  --ssh-rack-ink: #e6edf3;
+  --ssh-rack-muted: #93a4b5;
+  --ssh-rack-rule: #2e3f4f;
+  /* Rack-local accent. The brand token is near-black in the light skin, which
+     is invisible on graphite (1.19:1). A fixed light coral stays legible on the
+     dark chassis in BOTH skins; it marks interaction only, never health. */
+  --ssh-rack-accent: #f0a48f;
   display: flex;
   flex-direction: column;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  /* The frame owns no horizontal padding: the title bar and tab bar run edge
-     to edge like the rest of the shell, and only the content is inset. */
   padding: 0;
   gap: 0;
-  background: var(--dsw-alias-bg-base);
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .panelHeader {
+  color-scheme: dark;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 16px;
   flex: none;
-  padding: 12px 16px 10px;
+  min-height: 52px;
+  padding: 0 20px;
+  background: var(--ssh-rack-fill);
+  border-bottom: 1px solid var(--ssh-rack-rule);
 }
 
 .panelTitle {
   margin: 0;
   flex: 1;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 650;
-  letter-spacing: 0.2px;
-  color: var(--dsw-alias-label-primary);
+  letter-spacing: 0.02em;
+  color: var(--ssh-rack-ink);
   white-space: nowrap;
 }
 
 .backButton {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  /* Quieter than the title: it is an escape hatch, not the subject. */
-  color: var(--dsw-alias-label-secondary);
+  gap: 6px;
+  height: 28px;
+  padding: 0;
+  color: var(--ssh-rack-muted);
   font-size: 12px;
-  padding: 4px 8px;
-  border-color: transparent;
+  letter-spacing: 0.02em;
+  border: none;
+  background: transparent;
 }
 
 .backButton:hover:not(:disabled) {
-  color: var(--dsw-alias-label-primary);
+  color: var(--ssh-rack-ink);
 }
 
 /* --- tab bar ------------------------------------------------------------------
  *
- * Underline segments rather than boxes: a box implies a container the tab does
- * not have, and eight boxed tabs read as eight buttons. The underline sits on
- * the bar's own rule, so the active tab is joined to its content.
+ * A segmented channel selector, not eight links. Its filled selected segment
+ * makes the current instrument unmistakable even when the page is busy.
  */
 
 .tabBar {
+  color-scheme: dark;
   display: flex;
+  align-items: stretch;
   gap: 0;
   flex: none;
-  padding: 0 16px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  padding: 0 20px;
+  background: var(--ssh-rack-fill);
+  border-bottom: 1px solid var(--ssh-rack-rule);
   overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.tabBar::-webkit-scrollbar {
-  display: none;
+  scroll-padding-inline: 20px;
+  scrollbar-width: thin;
 }
 
 .tab {
   position: relative;
-  padding: 9px 12px 10px;
-  font-size: 12.5px;
-  color: var(--dsw-alias-label-secondary);
+  min-height: 40px;
+  padding: 0 16px;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--ssh-rack-muted);
   background: transparent;
   border: none;
+  border-left: 1px solid transparent;
+  border-right: 1px solid transparent;
   border-radius: 0;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 120ms ease;
+  transition: color 140ms ease, background 140ms ease;
 }
 
-/* The underline is a pseudo-element so it can be inset from the tab's padding
-   and sit exactly on the bar's rule, instead of a border that spans the whole
-   clickable box. */
 .tab::after {
   content: '';
   position: absolute;
-  left: 10px;
-  right: 10px;
-  bottom: -1px;
-  height: 2px;
-  border-radius: 2px 2px 0 0;
-  background: transparent;
-  transition: background 120ms ease;
-}
-
-.tab:hover {
-  color: var(--dsw-alias-label-primary);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 3px;
   background: transparent;
 }
 
 .tab[data-active] {
-  color: var(--dsw-alias-label-primary);
-  font-weight: 600;
+  color: var(--ssh-rack-ink);
+  font-weight: 650;
+  border-left-color: var(--ssh-rack-rule);
+  border-right-color: var(--ssh-rack-rule);
+}
+
+/* Active and hover sit on the graphite chassis, so their fills mix a light
+   ink toward transparent — never bg-layer-2, which is near-white in the light
+   skin and would flash a light box behind light text. */
+.tab:hover {
+  color: var(--ssh-rack-ink);
+  background: color-mix(in srgb, #e6edf3 6%, transparent);
+}
+
+.tab[data-active] {
+  background: color-mix(in srgb, #e6edf3 10%, transparent);
 }
 
 .tab[data-active]::after {
-  background: var(--dsw-alias-brand-primary, var(--dsw-alias-state-business-primary));
+  background: var(--ssh-rack-accent);
 }
 
 .panelContent {
@@ -140,7 +174,21 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 14px 16px 16px;
+  padding: 16px 20px 20px;
+}
+
+/* Deploy and Logs return their own flex page rather than a scrollable tabBody.
+   This rule is deliberately limited to those direct children: Hosts keeps its
+   fixed toolbar and internally scrolling table. */
+.panelContent > .panel {
+  flex: 1;
+  overflow-y: auto;
+  background: transparent;
+  gap: 14px;
+}
+
+.fillBody:has(> .formCard) {
+  overflow-y: auto;
 }
 
 /* Scrollable tab body (transfer / tunnels); hosts and cluster use fillBody so
@@ -148,7 +196,7 @@
 .tabBody {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -157,18 +205,13 @@
 .fillBody {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
-/* --- toolbar / controls -------------------------------------------------------
- *
- * Every control in a toolbar is exactly 30px tall. Different paddings on a
- * search box, a select and two buttons is what made the old row look ragged;
- * a shared height removes the problem instead of aligning it by eye.
- */
+/* --- toolbar / controls ------------------------------------------------------- */
 
 .toolbar {
   display: flex;
@@ -196,27 +239,30 @@
 }
 
 .search {
-  flex: 1 1 220px;
+  flex: 1 1 240px;
   min-width: 140px;
-  max-width: 340px;
-  height: 30px;
+  max-width: 360px;
+  height: var(--ssh-control-height);
   box-sizing: border-box;
-  padding: 0 10px;
-  font-size: 12.5px;
+  padding: 0 12px;
+  font-size: 12px;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-specific-input-major);
+  background: var(--dsw-alias-bg-base);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 7px;
+  border-radius: var(--ssh-radius);
   outline: none;
-  transition: border-color 120ms ease;
+  transition: border-color 140ms ease;
 }
 
-.search:hover {
+.search:hover,
+.groupBySelect:hover {
   border-color: var(--dsw-alias-border-l2);
 }
 
-.search:focus {
-  border-color: var(--dsw-alias-brand-primary, var(--dsw-alias-state-business-primary));
+.search:focus,
+.groupBySelect:focus,
+.input:focus {
+  border-color: var(--dsw-alias-brand-primary);
 }
 
 .search::placeholder {
@@ -224,20 +270,19 @@
 }
 
 .groupBySelect {
-  height: 30px;
+  height: var(--ssh-control-height);
   box-sizing: border-box;
-  padding: 0 8px;
-  font-size: 12.5px;
+  padding: 0 10px;
+  font-size: 12px;
   color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-specific-input-major);
+  background: var(--dsw-alias-bg-base);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 7px;
+  border-radius: var(--ssh-radius);
   outline: none;
   cursor: pointer;
 }
 
 .groupBySelect:hover {
-  border-color: var(--dsw-alias-border-l2);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -306,12 +351,11 @@
   flex: none;
 }
 
-/* --- tables -------------------------------------------------------------------
+/* --- rack ledger --------------------------------------------------------------
  *
- * The host table is the panel's subject, so it gets the only raised surface in
- * the file. Rows are middle-aligned (the old top alignment left short cells
- * floating in tall rows) and carry a 2px state rail on the left edge: a column
- * of colour is readable at a glance where a word is not.
+ * The table is a continuous equipment ledger: squared-off frame, engraved
+ * column labels, generous host identifiers and tightly aligned machine data.
+ * Only the row's state rail uses colour decoratively; all status is also text.
  */
 
 .tableWrap {
@@ -319,45 +363,53 @@
   min-height: 0;
   overflow: auto;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-1);
+  border-radius: var(--ssh-radius);
+  background: var(--dsw-alias-bg-base);
+  box-shadow: 0 1px 2px var(--dsw-alias-bg-mask-1);
 }
 
 .table {
   width: 100%;
-  border-collapse: collapse;
-  font-size: 12.5px;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
 }
 
 .table th {
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 9px 12px;
+  padding: 11px 14px;
   text-align: left;
-  /* Solid, not translucent: a sticky header over scrolled content must not
-     show the rows through it. */
-  background: var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
   white-space: nowrap;
 }
 
 .table td {
-  padding: 9px 12px;
+  padding: 8px 14px;
   border-bottom: 1px solid var(--dsw-alias-separator-primary, var(--dsw-alias-border-l1));
   vertical-align: middle;
 }
 
-/* The rail and the pinned action column belong to the host table alone: other
-   tabs reuse `.table` for plain result grids, where a coloured left edge or a
-   floating last column would mean nothing and would hide content. */
+/* Only the host ledger receives the dense two-line row height. Result grids
+   elsewhere retain their own content-driven height. */
+.hostsTable td {
+  height: 60px;
+  box-sizing: border-box;
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+/* Scoped to the host ledger: other tabs' result grids must not acquire a
+   decorative state rail or pin an unrelated last column. */
 .hostsTable td:first-child {
-  border-left: 2px solid transparent;
+  border-left: 3px solid transparent;
 }
 
 .table tbody tr:last-child td {
@@ -368,24 +420,18 @@
   background: var(--dsw-alias-bg-layer-2);
 }
 
-/* On a narrow panel the table scrolls sideways, which would push the row's
-   primary action off-screen. Pinning the actions column keeps "Connect"
-   reachable at any width instead of making the operator scroll for it. The
-   cells need their own opaque fill or the scrolled columns show through. */
 .hostsTable th:last-child,
 .hostsTable td:last-child {
   position: sticky;
   right: 0;
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: -6px 0 8px -6px var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
+  box-shadow: -8px 0 12px -10px var(--dsw-alias-border-l2);
 }
 
 .hostsTable tbody tr:hover td:last-child {
   background: var(--dsw-alias-bg-layer-2);
 }
 
-/* Reachability, from the last test this panel ran. `unknown` stays uncoloured:
-   a host nobody has probed yet is not a healthy host. */
 .hostsTable tbody tr[data-state='ok'] td:first-child {
   border-left-color: var(--dsw-alias-state-success-primary);
 }
@@ -395,7 +441,7 @@
 }
 
 .hostsTable tbody tr[data-state='testing'] td:first-child {
-  border-left-color: var(--dsw-alias-state-business-primary);
+  border-left-color: var(--dsw-alias-brand-primary);
   animation: dshSshPulse 1.1s ease-in-out infinite;
 }
 
@@ -403,24 +449,19 @@
   50% { opacity: 0.35; }
 }
 
-/* --- the machine identity block ------------------------------------------------
- *
- * Signature element. `alias` over `user@host:port` is how the operator already
- * writes a machine in ~/.ssh/config, so the two-line block replaces three flat
- * columns with one readable unit and frees the table's width for the columns
- * that actually vary (tag, environment, description).
- */
+/* --- machine identity --------------------------------------------------------- */
 
 .hostIdentity {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
 }
 
 .hostAlias {
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   color: var(--dsw-alias-label-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -431,9 +472,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11.5px;
-  /* Tabular figures keep ports from shifting the address as they change. */
+  font-family: var(--ssh-data-face);
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
   color: var(--dsw-alias-label-tertiary);
   overflow: hidden;
@@ -446,7 +486,7 @@
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--ssh-data-face);
   font-variant-numeric: tabular-nums;
 }
 
@@ -454,8 +494,6 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-/* Tag list as discrete marks: a comma-joined string hides how many tags a host
-   has and where one ends. */
 .tagList {
   display: flex;
   flex-wrap: wrap;
@@ -463,27 +501,28 @@
 }
 
 .tag {
-  padding: 1px 6px;
+  padding: 1px 5px;
+  font-family: var(--ssh-data-face);
   font-size: 11px;
   line-height: 1.5;
   color: var(--dsw-alias-label-secondary);
   background: var(--dsw-alias-bg-layer-2);
-  border-radius: 4px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 3px;
   white-space: nowrap;
 }
 
 /* --- row actions --------------------------------------------------------------
  *
- * One primary action, then quiet text links. Before this, four links of equal
- * weight sat in a row, so "Delete" looked exactly as inviting as "Test" — the
- * destructive action had no visual cost.
+ * The main action is a compact instrument key, not a full-width web CTA.
+ * Secondary actions only reveal their full colour on intent.
  */
 
 .actions {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 12px;
   white-space: nowrap;
 }
 
@@ -494,6 +533,7 @@
 }
 
 .actionLink {
+  min-height: 24px;
   padding: 0;
   font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
@@ -501,11 +541,11 @@
   border: none;
   cursor: pointer;
   white-space: nowrap;
-  transition: color 120ms ease;
+  transition: color 140ms ease;
 }
 
 .actionLink:hover:not(:disabled) {
-  color: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-brand-primary);
 }
 
 .actionLink:disabled {
@@ -517,40 +557,39 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* The one filled control per row, so the next action is unmistakable. */
 .connectButton {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
-  height: 26px;
-  padding: 0 10px;
+  height: 28px;
+  padding: 0 12px;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--dsw-alias-label-primary-foreground);
   background: var(--dsw-alias-button-info-fill);
-  border: none;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--ssh-radius);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 120ms ease;
+  transition: background 140ms ease;
 }
 
 .connectButton:hover {
   background: var(--dsw-alias-button-info-hover);
 }
 
-/* Test outcome as a chip, not a sentence: the full error stays in `title`. */
 .inlineTest {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   max-width: 220px;
-  padding: 1px 7px;
+  padding: 0;
+  font-family: var(--ssh-data-face);
   font-size: 11px;
   line-height: 1.6;
-  border-radius: 4px;
   color: var(--dsw-alias-label-secondary);
-  background: var(--dsw-alias-bg-layer-2);
+  background: transparent;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -564,99 +603,89 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* --- badges -------------------------------------------------------------------
+/* --- status and instrument keys ------------------------------------------------
  *
- * A status dot and a word, not a bordered pill. The old pill put a box around
- * every bit of metadata, which made the least important cell the loudest thing
- * in the row; a dot carries the same colour signal at a fraction of the weight.
- * The dot is `currentColor`, so each variant only has to set one colour.
+ * Status is a small rectangular instrument readout. Its side rule carries the
+ * state colour; the text remains readable without colour vision.
  */
 
 .badge {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  padding: 2px 6px;
+  font-family: var(--ssh-data-face);
+  font-size: 11px;
   line-height: 1.5;
   color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 3px;
   white-space: nowrap;
 }
 
 .badge::before {
   content: '';
-  width: 5px;
-  height: 5px;
+  width: 3px;
+  height: 10px;
   flex: none;
-  border-radius: 50%;
-  background: currentColor;
+  border-radius: 1px;
+  background: var(--dsw-alias-border-l2);
 }
 
-.badge[data-kind='key'] {
-  color: var(--dsw-alias-state-business-primary);
-}
-
-.badge[data-kind='password'] {
+/* Authentication (data-kind=key/password/agent) and forwarding carry no
+   colour of their own: they fall through to the neutral base above, because a
+   password host is metadata, not a warning, and an agent host is not a health
+   verdict. Only genuine STATUS words below are coloured.
+   `warn` (plaintext credentials, not-armed) and `pending`/`timeout` are real
+   caution states and stay amber — neutralizing them would hide live warnings. */
+.badge[data-status='pending'],
+.badge[data-status='warn'],
+.badge[data-status='timeout'] {
   color: var(--dsw-alias-state-warn-primary);
 }
 
-.badge[data-kind='agent'] {
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.badge[data-kind='proxy'] {
-  margin-left: 2px;
-  color: var(--dsw-alias-state-business-primary);
-}
-
-.badge[data-kind='forward-agent'] {
-  margin-left: 2px;
-  color: var(--dsw-alias-state-warn-primary);
+.badge[data-status='pending']::before,
+.badge[data-status='warn']::before,
+.badge[data-status='timeout']::before {
+  background: var(--dsw-alias-state-warn-primary);
 }
 
 .badge[data-status='ok'] {
   color: var(--dsw-alias-state-success-primary);
 }
 
-.badge[data-status='fail'] {
-  color: var(--dsw-alias-state-error-primary);
+.badge[data-status='ok']::before {
+  background: var(--dsw-alias-state-success-primary);
 }
 
-.badge[data-status='timeout'] {
-  color: var(--dsw-alias-state-warn-primary);
-}
-
-/* The fleet tab distinguishes four alert states and two change directions.
-   `ok`/`fail` above serve the host-test badge; these add the remaining
-   states so a firing or pending alert is not rendered in the neutral colour
-   (an uncoloured badge reads as "nothing to see", which is the one thing a
-   firing alert must never look like). */
+.badge[data-status='fail'],
 .badge[data-status='error'] {
   color: var(--dsw-alias-state-error-primary);
 }
 
-.badge[data-status='warn'],
-.badge[data-status='pending'] {
-  color: var(--dsw-alias-state-warn-primary);
+.badge[data-status='fail']::before,
+.badge[data-status='error']::before {
+  background: var(--dsw-alias-state-error-primary);
 }
 
-/* --- buttons ------------------------------------------------------------------
- *
- * All three share one height and one radius. The old set mixed 5px and 6px
- * padding, so a toolbar of a search box and two buttons had three baselines.
- */
+.badge[data-kind='proxy'],
+.badge[data-kind='forward-agent'] {
+  margin-left: 2px;
+}
 
 .primaryButton {
-  height: 30px;
+  height: var(--ssh-control-height);
   padding: 0 14px;
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: 12px;
+  font-weight: 650;
   color: var(--dsw-alias-label-primary-foreground);
   background: var(--dsw-alias-button-info-fill);
-  border: none;
-  border-radius: 7px;
+  border: 1px solid transparent;
+  border-radius: var(--ssh-radius);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 120ms ease;
+  transition: background 140ms ease;
 }
 
 .primaryButton:hover:not(:disabled) {
@@ -672,22 +701,23 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 30px;
+  height: var(--ssh-control-height);
   box-sizing: border-box;
   padding: 0 12px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--dsw-alias-label-secondary);
-  background: transparent;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 7px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ssh-radius);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 120ms ease, color 120ms ease;
+  transition: background 140ms ease, color 140ms ease;
 }
 
 .ghostButton:hover:not(:disabled) {
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-alias-bg-layer-2);
+  border-color: var(--dsw-alias-border-l2);
 }
 
 .ghostButton:disabled {
@@ -704,7 +734,7 @@
   padding: 0;
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ssh-radius);
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
   font-size: 13px;
@@ -718,7 +748,7 @@
 .linkButton {
   padding: 0;
   font-size: 12px;
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-brand-primary);
   background: none;
   border: none;
   cursor: pointer;
@@ -739,14 +769,21 @@
 }
 
 /* Keyboard focus, once, for everything the panel renders. `:focus-visible` so a
-   mouse click does not leave a ring behind. */
+   mouse click does not leave a ring behind. Content uses the brand token; the
+   graphite chassis overrides it with the rack-local light accent, because the
+   brand token is near-black in the light skin and invisible on graphite. */
 .panel button:focus-visible,
 .panel input:focus-visible,
 .panel select:focus-visible,
 .panel textarea:focus-visible,
 .panel summary:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary, var(--dsw-alias-state-business-primary));
+  outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 2px;
+}
+
+.panelHeader button:focus-visible,
+.tabBar button:focus-visible {
+  outline-color: var(--ssh-rack-accent);
 }
 
 /* Motion here is feedback, never decoration: honour the system preference. */
@@ -758,20 +795,37 @@
   .connectButton,
   .ghostButton,
   .groupChevron,
-  .hostsTable tbody tr[data-state='testing'] td:first-child {
+  .hostsTable tbody tr[data-state='testing'] td:first-child,
+  .spinner,
+  .progressBar {
     transition: none;
     animation: none;
   }
 }
 
-/* --- spinner / banners / states ------------------------------------------------ */
+@media (max-width: 720px) {
+  .panelHeader,
+  .tabBar {
+    padding-inline: 12px;
+  }
+
+  .panelContent {
+    padding: 12px;
+  }
+
+  .tab {
+    padding-inline: 12px;
+  }
+}
+
+/* ---feedback and forms -------------------------------------------------------- */
 
 .spinner {
   display: inline-block;
   width: 11px;
   height: 11px;
   flex: none;
-  border: 2px solid var(--dsw-alias-state-business-primary);
+  border: 2px solid var(--dsw-alias-brand-primary);
   border-top-color: transparent;
   border-radius: 50%;
   animation: dshSshSpin 800ms linear infinite;
@@ -783,25 +837,26 @@
 }
 
 .banner {
-  padding: 8px 12px;
-  font-size: 12.5px;
+  padding: 9px 12px;
+  font-size: 12px;
   line-height: 1.5;
-  border-radius: 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--ssh-radius);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-left-width: 3px;
   color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
   overflow-wrap: anywhere;
 }
 
-/* Import skip detail: what an import left out and why (#1448). */
 .importSkips {
   list-style: none;
   margin: 6px 0 0;
-  padding: 8px 12px;
+  padding: 10px 12px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
+  border-radius: var(--ssh-radius);
   background: var(--dsw-alias-bg-layer-2);
 }
 
@@ -815,34 +870,29 @@
 
 .banner[data-kind='ok'] {
   color: var(--dsw-alias-state-success-primary);
-  border-color: var(--dsw-alias-state-success-primary);
+  border-left-color: var(--dsw-alias-state-success-primary);
 }
 
 .banner[data-kind='error'] {
   color: var(--dsw-alias-state-error-primary);
-  border-color: var(--dsw-alias-state-error-primary);
+  border-left-color: var(--dsw-alias-state-error-primary);
 }
 
 .banner[data-kind='info'] {
-  color: var(--dsw-alias-state-business-primary);
-  border-color: var(--dsw-alias-state-business-primary);
+  color: var(--dsw-alias-brand-primary);
+  border-left-color: var(--dsw-alias-brand-primary);
 }
 
-.empty {
-  padding: 28px 12px;
-  text-align: center;
-  font-size: 12.5px;
-  color: var(--dsw-alias-label-tertiary);
-}
-
+.empty,
 .loading {
-  padding: 28px 12px;
+  padding: 40px 16px;
   text-align: center;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
+  border: 1px dashed var(--dsw-alias-border-l1);
+  border-radius: var(--ssh-radius);
+  background: var(--dsw-alias-bg-base);
 }
-
-/* --- modal (host form) -------------------------------------------------------- */
 
 .modalBackdrop {
   position: fixed;
@@ -857,29 +907,57 @@
 .modal {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   width: min(560px, calc(100vw - 48px));
   max-height: calc(100vh - 96px);
   overflow-y: auto;
-  padding: 18px;
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 14px;
+  padding: 22px;
+  background: var(--dsw-alias-bg-overlay);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
   box-shadow: var(--dsw-shadow-lv3);
   color: var(--dsw-alias-label-primary);
 }
 
 .modalTitle {
   margin: 0;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+/* The terminal keyboard-interactive auth form (TerminalTab) overlays the dark
+   terminal and references modalCard/modalHeader rather than .modal. It needs an
+   opaque themed surface of its own, or its title reads near-black on the dark
+   terminal in the light skin. */
+.modalCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100% - 32px);
+  overflow-y: auto;
+  padding: 20px;
+  background: var(--dsw-alias-bg-overlay);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  box-shadow: var(--dsw-shadow-lv3);
+  color: var(--dsw-alias-label-primary);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .modalFooter {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-  margin-top: 4px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
 }
 
 .formError {
@@ -889,7 +967,7 @@
 }
 
 .hint {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--dsw-alias-label-tertiary);
 }
 
@@ -900,25 +978,22 @@
 }
 
 .fieldLabel {
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.02em;
   color: var(--dsw-alias-label-secondary);
 }
 
 .input {
-  padding: 7px 10px;
-  font-size: 13px;
+  padding: 8px 10px;
+  font-size: 12px;
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ssh-radius);
   outline: none;
   resize: vertical;
   font-family: inherit;
-}
-
-.input:focus {
-  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .input::placeholder {
@@ -945,7 +1020,7 @@
   display: inline-flex;
   gap: 6px;
   align-items: center;
-  font-size: 13px;
+  font-size: 12px;
   color: var(--dsw-alias-label-primary);
   cursor: pointer;
 }
@@ -985,7 +1060,7 @@
 
 .termTab[data-active] {
   background: var(--dsw-alias-bg-layer-2);
-  border-bottom-color: var(--dsw-alias-state-business-primary);
+  border-bottom-color: var(--dsw-alias-brand-primary);
 }
 
 .termTabLabel {
@@ -1068,7 +1143,7 @@
   flex: 1;
   min-height: 0;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--ssh-radius);
   overflow: hidden;
   background: #0b0e14;
 }
@@ -1106,7 +1181,7 @@
   flex-direction: column;
   flex: none;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--ssh-radius);
   overflow: hidden;
 }
 
@@ -1223,22 +1298,23 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 8px 12px;
-  background: var(--dsw-alias-bg-layer-2);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
+  padding: 10px 12px;
+  background: var(--dsw-alias-bg-base);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-left-width: 3px;
+  border-radius: var(--ssh-radius);
 }
 
 .tunnelRow[data-state='forwarding'] {
-  border-color: var(--dsw-alias-state-success-primary);
+  border-left-color: var(--dsw-alias-state-success-primary);
 }
 
 .tunnelRow[data-state='connecting'] {
-  border-color: var(--dsw-alias-state-warn-primary);
+  border-left-color: var(--dsw-alias-state-warn-primary);
 }
 
 .tunnelRow[data-state='failed'] {
-  border-color: var(--dsw-alias-state-error-primary);
+  border-left-color: var(--dsw-alias-state-error-primary);
 }
 
 .tunnelLabel {
@@ -1254,11 +1330,11 @@
 .formCard {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: var(--dsw-alias-bg-layer-2);
+  gap: 12px;
+  padding: 16px;
+  background: var(--dsw-alias-bg-base);
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
+  border-radius: var(--ssh-radius);
   flex: none;
 }
 
@@ -1338,11 +1414,12 @@
 
 .secondaryButton {
   align-self: flex-start;
-  padding: 5px 10px;
-  font-size: 12px;
-  border-radius: 6px;
-  border: 1px dashed var(--dsw-alias-border-l2);
-  background: transparent;
+  min-height: 28px;
+  padding: 4px 10px;
+  font-size: 11px;
+  border-radius: var(--ssh-radius);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
 }
@@ -1356,10 +1433,10 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-1);
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--ssh-radius);
+  background: var(--dsw-alias-bg-base);
 }
 
 .stepHead {
@@ -1376,30 +1453,30 @@
 }
 
 .chip {
-  padding: 3px 8px;
-  font-size: 11.5px;
-  border-radius: 999px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  background: transparent;
+  padding: 4px 9px;
+  font-size: 11px;
+  border-radius: var(--ssh-radius);
+  border: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-secondary);
   cursor: pointer;
 }
 
 .chip[data-selected='true'] {
-  border-color: var(--dsw-alias-state-ok-secondary);
-  background: var(--dsw-alias-state-ok-tertiary);
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
 }
 
 .resultCard {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px;
+  gap: 8px;
+  padding: 12px;
   margin-bottom: 8px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
+  border-radius: var(--ssh-radius);
+  background: var(--dsw-alias-bg-base);
 }
 
 .resultHead {
@@ -1472,7 +1549,6 @@
 
 .banner[data-kind='warn'] {
   color: var(--dsw-alias-state-warn-primary);
-  background: var(--dsw-alias-state-warn-tertiary);
-  border: 1px solid var(--dsw-alias-state-warn-secondary);
+  border-left-color: var(--dsw-alias-state-warn-primary);
 }
 

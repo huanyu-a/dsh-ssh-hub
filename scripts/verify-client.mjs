@@ -298,6 +298,8 @@ const UI_CLASSES = [
   'hostIdentity', 'hostAlias', 'hostEndpoint',
   // row affordances
   'hostsTable', 'tagList', 'tag', 'actions', 'actionLinks', 'actionLink', 'connectButton',
+  // the terminal keyboard-interactive auth surface (TerminalTab)
+  'modalCard', 'modalHeader',
 ]
 for (const name of UI_CLASSES) {
   if (!bundleText.includes(`"${name}": "${name}_`)) {
@@ -325,6 +327,30 @@ for (const rule of ['focus-visible', 'prefers-reduced-motion']) {
   }
 }
 pass('the stylesheet keeps a keyboard focus ring and honours reduced motion')
+
+// The rack chassis is an inverted island (like the terminal). Its tokens must
+// survive bundling, and the chassis foreground must never be derived from a
+// token that flips between skins — that is the contrast bug this guards.
+for (const token of ['--ssh-rack-fill', '--ssh-rack-ink', '--ssh-rack-muted', '--ssh-rack-rule']) {
+  if (!bundleText.includes(token)) {
+    fail(`the rack chassis token ${token} is missing from the bundle — the inverted header/tab bar would lose its foreground contract`)
+  }
+}
+// The chassis foreground must be a fixed light ink, not a theme token whose
+// meaning inverts between light and dark skins.
+if (!bundleText.includes('--ssh-rack-ink: #e6edf3')) {
+  fail('the rack ink is not a fixed light colour; a theme-derived ink would be unreadable on one of the two skins')
+}
+pass('the rack chassis keeps a fixed light foreground over graphite in both skins')
+
+// The rack accent (active-tab marker + chassis focus ring) must be a light
+// coral, not the brand token: the brand token is near-black in the light skin
+// and invisible on graphite. Both the active tab and the chassis focus ring
+// must use it.
+if (!bundleText.includes('--ssh-rack-accent')) {
+  fail('the rack-local accent token is missing; the active-tab marker and chassis focus ring would fall back to the near-black brand token on graphite')
+}
+pass('the rack accent is a fixed light coral for the chassis marker and focus ring')
 
 // The compact row copy: the full sentences are still used for tooltips, but a
 // row that renders the long form pushes the actions off the row.

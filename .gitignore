@@ -13,3 +13,6 @@ artifacts/
 .DS_Store
 Thumbs.db
 *.swp
+
+# Serena tool state
+.serena/
