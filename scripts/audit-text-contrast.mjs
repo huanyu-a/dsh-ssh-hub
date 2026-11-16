@@ -267,6 +267,30 @@ function floorFor(rule) {
   return large ? 3 : 4.5
 }
 
+/**
+ * The surface the host dialog paints on, read from the stylesheet itself.
+ *
+ * Both .modal and .modalCard are dialog surfaces; whichever declares a
+ * background wins, and if they disagree the darker one is used so the audit
+ * cannot pass by luck. Falls back to bg-layer-2 when nothing is declared.
+ */
+function dialogSurface(skinMap, panelMap) {
+  const declared = []
+  for (const selector of ['.modal', '.modalCard']) {
+    const rule = new RegExp(`(?:^|[\\s,}])${selector.replace('.', '\\.')}\\s*\\{([\\s\\S]*?)\\}`, 'm').exec(PANEL)
+    if (rule === null) continue
+    const bg = /(?:^|;|\n)\s*background(?:-color)?\s*:\s*([^;]+)/.exec(rule[1])
+    if (bg === null) continue
+    const resolved = evaluate(bg[1].trim(), skinMap, panelMap)
+    if (resolved !== undefined) declared.push({ name: `${selector} surface`, color: resolved })
+  }
+  if (declared.length === 0) {
+    const fallback = evaluate('var(--dsw-alias-bg-layer-2)', skinMap, panelMap)
+    return fallback === undefined ? undefined : { name: 'dialog surface (assumed)', color: fallback }
+  }
+  return declared[0]
+}
+
 /** Surfaces a rule can paint on, per skin. Terminal classes are their own case. */
 function surfacesFor(rule, skin) {
   if (/^\.term(Wrap|Container|Placeholder)/.test(rule.selector)) {
@@ -274,6 +298,16 @@ function surfacesFor(rule, skin) {
   }
   const map = skin === 'dark' ? DARK : LIGHT
   const panelMap = panelTokens(map)
+  // Text that lives inside a dialog paints on the dialog's own surface, which is
+  // not the panel background. Auditing it against layer-1/2/base is how the
+  // dialog's 3.85:1 and 3.24:1 measurements went unnoticed: every surface the
+  // audit sampled was a surface the dialog does not use. The surface is read
+  // from the dialog's own declaration, so changing .modal's background is
+  // reflected here instead of being asserted in two places that drift apart.
+  if (/^\.(formError|hint|fieldLabel|modalTitle|field|modalFooter)\b/.test(rule.selector)) {
+    const dialogRule = dialogSurface(map, panelMap)
+    if (dialogRule !== undefined) return [{ name: dialogRule.name, color: dialogRule.color }]
+  }
   // Measured against the rule's own fill when it has one; text on a brand-filled
   // button is not text on the panel surface. A translucent fill (the tab fills
   // mix label-primary with `transparent`) must be composited onto whatever sits

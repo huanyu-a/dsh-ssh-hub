@@ -95,7 +95,7 @@ export function LogsTab({ api, active }: LogsTabProps) {
 
   return (
     <div className={css.panel}>
-      {error !== null && <div className={css.banner} data-kind="error">{error}</div>}
+      {error !== null && <div className={css.banner} data-kind="error" role="alert">{error}</div>}
 
       <section className={css.formCard}>
         <h3 className={css.sectionTitle}>{tt('logs.form.title')}</h3>

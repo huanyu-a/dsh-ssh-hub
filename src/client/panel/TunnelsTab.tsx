@@ -221,8 +221,8 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
         )}
         <button type="button" className={css.ghostButton} onClick={() => { void refresh() }}>{tt('common.refresh')}</button>
       </div>
-      {error !== null && <div className={css.banner} data-kind="error">{error}</div>}
-      {notice !== null && <div className={css.banner} data-kind="ok">{notice}</div>}
+      {error !== null && <div className={css.banner} data-kind="error" role="alert">{error}</div>}
+      {notice !== null && <div className={css.banner} data-kind="ok" role="status">{notice}</div>}
       {tunnels !== null && tunnels.length === 0 && <div className={css.empty}>{tt('tunnel.empty')}</div>}
       {(tunnels ?? []).some(tunnel => tunnel.source === 'external') && (
         <div className={css.hint}>{tt('tunnel.externalHint')}</div>

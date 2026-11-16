@@ -55,11 +55,40 @@ function readFromAsar(archive, suffix) {
  * `skin` and `tab` come from the query string so one file serves every
  * combination; the runner drives them by URL rather than writing a file per case.
  */
+/**
+ * The theme is fourteen stylesheets, not one.
+ *
+ * The package imports each of them from JS rather than via @import, so injecting
+ * only design-platform.css left the harness without the shadow tokens (declared
+ * in gradient-shadow-text.css), the focus treatment, or the scrollbar tokens.
+ * Anything measured against those would have been measuring a page the GUI never
+ * renders. Order matters: base first, then the alias layer, then the decorative
+ * and interactive layers that build on it.
+ */
+const THEME_ORDER = [
+  'src/styles/base.css',
+  'src/styles/design-platform.css',
+  'src/styles/gradient-shadow-text.css',
+  'src/styles/focus.css',
+  'src/styles/scrollbar.css',
+  'src/styles/corner-shape.css',
+  'src/styles/onboarding.css',
+  'src/styles/shiki.css',
+  'src/styles/brand-font.css',
+]
+
+/** Every stylesheet the theme package ships, in load order. */
+function readTheme(archive) {
+  const parts = []
+  for (const name of THEME_ORDER) {
+    const text = readFromAsar(archive, `dsh-client-ui-theme/${name}`)
+    if (text !== undefined) parts.push(`/* ==== ${name} ==== */\n${text}`)
+  }
+  return parts.length === 0 ? undefined : parts.join('\n')
+}
+
 export function writeHarnessPage(root, outDir) {
-  const theme = readFromAsar(
-    join(process.env.LOCALAPPDATA ?? '', 'Programs/DeepSeek Harness/resources/app.asar'),
-    'dsh-client-ui-theme/src/styles/design-platform.css',
-  )
+  const theme = readTheme(join(process.env.LOCALAPPDATA ?? '', 'Programs/DeepSeek Harness/resources/app.asar'))
   if (theme === undefined) return false
 
   const html = `<!DOCTYPE html>

@@ -155,8 +155,17 @@ export function HostFormDialog({ api, editing, onClose, onSaved }: HostFormDialo
 
   return (
     <div className={css.modalBackdrop} onClick={onClose}>
-      <div className={css.modal} role="dialog" aria-modal="true" onClick={event => { event.stopPropagation() }}>
-        <h3 className={css.modalTitle}>{editing != null ? tt('form.title.edit', { alias: editing.alias }) : tt('form.title.create')}</h3>
+      <div
+        className={css.modal}
+        role="dialog"
+        aria-modal="true"
+        // A dialog with no accessible name is announced as just "dialog", so a
+        // screen-reader user cannot tell add-host from edit-host. The title
+        // already says which; it only needed to be referenced.
+        aria-labelledby="dsh-ssh-host-form-title"
+        onClick={event => { event.stopPropagation() }}
+      >
+        <h3 className={css.modalTitle} id="dsh-ssh-host-form-title">{editing != null ? tt('form.title.edit', { alias: editing.alias }) : tt('form.title.create')}</h3>
         <div className={css.formRow}>
           <label className={css.field}>
             <span className={css.fieldLabel}>{tt('form.alias')}</span>
@@ -261,7 +270,7 @@ export function HostFormDialog({ api, editing, onClose, onSaved }: HostFormDialo
           <input className={css.input} value={form.tags} onChange={event => { set('tags', event.target.value) }} />
           <span className={css.hint}>{tt('form.tagsHint')}</span>
         </label>
-        {error !== null && <p className={css.formError}>{tt('common.error', { error })}</p>}
+        {error !== null && <p className={css.formError} role="alert">{tt('common.error', { error })}</p>}
         <div className={css.modalFooter}>
           <button type="button" className={css.ghostButton} disabled={saving} onClick={onClose}>{tt('form.cancel')}</button>
           <button type="button" className={css.primaryButton} disabled={saving} onClick={() => { void save() }}>{tt('form.save')}</button>

@@ -179,7 +179,7 @@ export function TransferTab({ api }: TransferTabProps) {
         <button type="button" className={css.ghostButton} disabled={!ready} onClick={() => { void handleDownload() }}>{tt('transfer.download')}</button>
         <input ref={fileRef} type="file" className={css.hiddenFile} onChange={event => { void handleFile(event) }} />
       </div>
-      {listError !== null && <div className={css.banner} data-kind="error">{tt('common.error', { error: listError })}</div>}
+      {listError !== null && <div className={css.banner} data-kind="error" role="alert">{tt('common.error', { error: listError })}</div>}
       {browseOpen && (
         <div className={css.browsePanel}>
           <div className={css.browseHeader}>
@@ -193,6 +193,12 @@ export function TransferTab({ api }: TransferTabProps) {
                 <span className={css.dirType} />
                 <span className={css.dirSize} />
               </button>
+            )}
+            {/* An empty directory used to render nothing at all, which is
+                indistinguishable from a listing that failed to load. Every other
+                list surface in the panel states emptiness explicitly. */}
+            {entries.length === 0 && (
+              <div className={css.empty}>{tt('transfer.emptyDir')}</div>
             )}
             {entries.map(entry => (
               <button key={entry.name} type="button" className={css.dirRow} data-type={entry.type} onClick={() => {

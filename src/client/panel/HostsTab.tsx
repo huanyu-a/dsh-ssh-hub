@@ -298,7 +298,7 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
   return (
     <div className={css.fillBody}>
       <div className={css.toolbar}>
-        <input className={css.search} type="search" placeholder={tt('hosts.search')} value={search} onChange={event => { setSearch(event.target.value) }} />
+        <input className={css.search} type="search" aria-label={tt('hosts.search')} placeholder={tt('hosts.search')} value={search} onChange={event => { setSearch(event.target.value) }} />
         <select
           className={css.groupBySelect}
           aria-label={tt('hosts.groupBy.label')}
@@ -323,7 +323,7 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
           )}
         </div>
       )}
-      {notice !== null && <div className={css.banner} data-kind="ok">{notice}</div>}
+      {notice !== null && <div className={css.banner} data-kind="ok" role="status">{notice}</div>}
       {notice !== null && importSkips.length > 0 && (
         <ul className={css.importSkips}>
           {importSkips.slice(0, IMPORT_SKIP_LIMIT).map(block => (
@@ -339,7 +339,7 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
           )}
         </ul>
       )}
-      {error !== null && <div className={css.banner} data-kind="error">{tt('common.error', { error })}</div>}
+      {error !== null && <div className={css.banner} data-kind="error" role="alert">{tt('common.error', { error })}</div>}
       {hosts === null && error === null && <div className={css.loading}>{tt('common.loading')}</div>}
       {hosts !== null && hosts.length === 0 && <div className={css.empty}>{tt('hosts.empty')}</div>}
       {hosts !== null && hosts.length > 0 && groupBy === 'none' && (

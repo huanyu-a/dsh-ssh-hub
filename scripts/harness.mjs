@@ -33,6 +33,7 @@ import { ClusterTab } from './src/client/panel/ClusterTab.tsx'
 import { DeployTab } from './src/client/panel/DeployTab.tsx'
 import { LogsTab } from './src/client/panel/LogsTab.tsx'
 import { HostFormDialog } from './src/client/panel/HostFormDialog.tsx'
+import { SshPanel } from './src/client/panel/SshPanel.tsx'
 import css from './src/client/panel/panel.module.css'
 
 const params = new URLSearchParams(location.search)
@@ -58,6 +59,17 @@ const TABS = {
   deploy: [DeployTab, { api, active: true }],
   logs: [LogsTab, { api, active: true }],
   dialog: [HostFormDialog, { api, editing: null, onClose: () => {}, onSaved: () => {} }],
+}
+
+// The whole panel shell, including its own header and tab strip. The per-tab
+// views below render a simplified header, so anything about the header's flex
+// behaviour has to be measured on the real component.
+if (which === 'shell') {
+  const root = createRoot(document.getElementById('root'))
+  root.render(React.createElement(SshPanel, { controller, api }))
+} else {
+  const root = createRoot(document.getElementById('root'))
+  root.render(React.createElement(Shell))
 }
 
 function Shell() {
@@ -121,8 +133,6 @@ class CrashGuard extends React.Component {
   }
 }
 
-const root = createRoot(document.getElementById('root'))
-root.render(<Shell />)
 `
 
 export async function bundleHarness() {

@@ -203,8 +203,8 @@ export function FleetTab({ api, active }: FleetTabProps) {
 
   return (
     <div className={css.fillBody}>
-      {error !== null && <div className={css.banner} data-kind="error">{tt('common.error', { error })}</div>}
-      {secretNotice !== null && <div className={css.banner} data-kind="ok">{secretNotice}</div>}
+      {error !== null && <div className={css.banner} data-kind="error" role="alert">{tt('common.error', { error })}</div>}
+      {secretNotice !== null && <div className={css.banner} data-kind="ok" role="status">{secretNotice}</div>}
 
       {/* Whether anything is watching comes first: a quiet alert list and an
           armed monitor look the same until you ask. */}
@@ -309,7 +309,7 @@ export function FleetTab({ api, active }: FleetTabProps) {
               </button>
             )}
             {security.encryptConfigured && !security.secret.available && (
-              <div className={css.banner} data-kind="error">{tt('fleet.switchWithoutKey')}</div>
+              <div className={css.banner} data-kind="error" role="alert">{tt('fleet.switchWithoutKey')}</div>
             )}
           </div>
         )}

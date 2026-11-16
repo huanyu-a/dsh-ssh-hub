@@ -67,9 +67,13 @@ export function ClusterTab({ api }: ClusterTabProps) {
           <textarea className={css.input + ' ' + css.commandInput} value={command} onChange={event => { setCommand(event.target.value) }} />
         </label>
         <div className={css.clusterFilters}>
-          <input className={css.input} placeholder={tt('cluster.aliases')} value={aliases} onChange={event => { setAliases(event.target.value) }} />
-          <input className={css.input} placeholder={tt('cluster.environment')} value={environment} onChange={event => { setEnvironment(event.target.value) }} />
-          <input className={css.input} placeholder={tt('cluster.tags')} value={tags} onChange={event => { setTags(event.target.value) }} />
+          {/* Placeholder-only fields have no accessible name: a screen reader
+              announces them as "edit text" with no indication of which filter it
+              is. The placeholders already carry the label text, so they are
+              reused as the aria-label rather than duplicated in the locale. */}
+          <input className={css.input} aria-label={tt('cluster.aliases')} placeholder={tt('cluster.aliases')} value={aliases} onChange={event => { setAliases(event.target.value) }} />
+          <input className={css.input} aria-label={tt('cluster.environment')} placeholder={tt('cluster.environment')} value={environment} onChange={event => { setEnvironment(event.target.value) }} />
+          <input className={css.input} aria-label={tt('cluster.tags')} placeholder={tt('cluster.tags')} value={tags} onChange={event => { setTags(event.target.value) }} />
         </div>
         <div className={css.clusterActions}>
           <button type="button" className={css.primaryButton} disabled={running || !canRun} onClick={() => { void run() }}>{tt('cluster.run')}</button>
@@ -81,7 +85,7 @@ export function ClusterTab({ api }: ClusterTabProps) {
           {!canRun && <span className={css.inlineHint}>{tt('cluster.needSelector')}</span>}
         </div>
       </div>
-      {error !== null && <div className={css.banner} data-kind="error">{tt('common.error', { error })}</div>}
+      {error !== null && <div className={css.banner} data-kind="error" role="alert">{tt('common.error', { error })}</div>}
       {results === null && error === null && <div className={css.empty}>{tt('cluster.empty')}</div>}
       {results !== null && results.length === 0 && <div className={css.empty}>{tt('cluster.noMatch')}</div>}
       {results !== null && results.length > 0 && (

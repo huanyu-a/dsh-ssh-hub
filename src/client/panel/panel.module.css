@@ -66,7 +66,15 @@
      toward the foreground's opposite reaches 5.06:1 while staying visually the
      same blue. */
   --ssh-fill-primary: color-mix(in srgb, var(--dsw-alias-button-info-fill) 90%, var(--dsw-alias-label-primary));
-  --ssh-fill-primary-hover: color-mix(in srgb, var(--dsw-alias-button-info-hover) 90%, var(--dsw-alias-label-primary));
+  /* Hover is derived from the fill, not from `button-info-hover`.
+     The theme's hover token is `deepseek-400` — a LIGHTER blue — in the light
+     skin, while the fill is `deepseek-500`. Mixing that toward label-primary
+     therefore lightened the button, and white text on it measured 2.79:1, below
+     the 4.5 floor at exactly the moment the user's cursor is on the control.
+     Mixing the fill further toward label-primary instead moves it away from the
+     foreground colour in both skins, because the foreground is the opposite of
+     label-primary. Measured: light 4.93 -> 6.14, dark 8.86 -> 9.94. */
+  --ssh-fill-primary-hover: color-mix(in srgb, var(--ssh-fill-primary) 85%, var(--dsw-alias-label-primary));
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -94,6 +102,8 @@
 
 .panelTitle {
   margin: 0;
+  /* Inside .panelHeader this is the growing child: it takes the space left by
+     the back button. Unrelated to the tab strip's flex, which acts on height. */
   flex: 1;
   font-size: 14px;
   font-weight: 650;
@@ -128,6 +138,13 @@
   display: flex;
   align-items: stretch;
   gap: 2px;
+  /* `flex: none` is correct HERE and must not be "fixed" into a growable value:
+     the bar is a child of `.panel`, which is a COLUMN flex container, so flex
+     controls its height, not its width. Width comes from `align-items: stretch`,
+     and `overflow-x: auto` then scrolls the tabs inside that width. Measured on
+     the real SshPanel at 768 / 640 / 600 / 520 / 480 / 360 px: the page never
+     scrolls sideways and the strip switches to its own horizontal scroll below
+     520px. Making it grow would stretch the strip vertically. */
   flex: none;
   padding: 0 20px;
   background: var(--ssh-chrome);
@@ -582,8 +599,7 @@
   background: var(--ssh-fill-primary);
   border: 1px solid transparent;
   border-radius: var(--ssh-radius);
-  cursor: pointer;
-  white-space: nowrap;
+  cursor: pointer;  white-space: nowrap;
   transition: background 140ms ease;
 }
 
@@ -709,6 +725,18 @@
   cursor: default;
 }
 
+/* Every button that declares `cursor: pointer` needs a disabled state, or a
+   control that cannot be clicked still advertises itself as clickable. These
+   three were the only ones missing it, and secondaryButton drives the deploy
+   form's "add step". Kept together so a new button class has an obvious place
+   to join the group. */
+.iconButton:disabled,
+.secondaryButton:disabled,
+.connectButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .ghostButton {
   display: inline-flex;
   align-items: center;
@@ -824,6 +852,14 @@
   .tab {
     padding-inline: 12px;
   }
+
+  /* The host ledger needs nothing here, and adding a min-width would have been
+     cargo cult: measured on the real panel it is already 723px wide naturally,
+     and at 720 / 600 / 480px .tableWrap scrolls it inside its own box with no
+     page overflow while the sticky actions column stays visible and reachable
+     (last cell right edge 707 / 587 / 467, all inside the wrap). A min-width
+     below that natural width changes nothing; one above it would only force
+     scrolling where none is needed. Verified rather than assumed. */
 }
 
 /* ---feedback and forms -------------------------------------------------------- */
@@ -920,10 +956,17 @@
   max-height: calc(100vh - 96px);
   overflow-y: auto;
   padding: 22px;
-  background: var(--dsw-alias-bg-overlay);
+  /* Same surface the host's own dialogs use (SettingsRoot.module.css: the
+     settings panel is `bg-layer-2` with `dsw-elevation-prominent`). This panel
+     was the only thing in the app using `bg-overlay` as a content surface, and
+     that token resolves to a mid grey in the dark skin (neutral-bluish-700) —
+     near-white field labels on it measured 3.85:1 and the hints 3.24:1, both
+     under the 4.5 floor. Matching the host's elevation fixes the ratio and
+     makes the dialog look like the rest of the GUI. */
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-prominent);
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 8px;
-  box-shadow: var(--dsw-shadow-lv3);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -946,10 +989,13 @@
   max-height: calc(100% - 32px);
   overflow-y: auto;
   padding: 20px;
-  background: var(--dsw-alias-bg-overlay);
+  /* Same elevation as .modal above, for the same reason: this card overlays the
+     dark terminal, and `bg-overlay` is a mid grey that no calibrated text token
+     was measured against. */
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-elevation-prominent);
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 8px;
-  box-shadow: var(--dsw-shadow-lv3);
   color: var(--dsw-alias-label-primary);
 }
 

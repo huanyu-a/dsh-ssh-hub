@@ -505,13 +505,13 @@ export function TerminalTab({ api, controller, presetAlias, terminalFont }: Term
         <button type="button" className={css.ghostButton} disabled={activeTab === undefined} onClick={() => { if (activeTab !== undefined) closeTab(activeTab.id) }}>{tt('terminal.disconnect')}</button>
       </div>
       {activeTab?.status === 'connecting' && <div className={css.banner} data-kind="info">{tt('terminal.connecting')}</div>}
-      {activeTab?.status === 'connected' && stateLabel === undefined && <div className={css.banner} data-kind="ok">{tt('terminal.ready', { alias: activeTab.alias })}</div>}
+      {activeTab?.status === 'connected' && stateLabel === undefined && <div className={css.banner} data-kind="ok" role="status">{tt('terminal.ready', { alias: activeTab.alias })}</div>}
       {activeTab?.status === 'exited' && (
         <div className={css.banner} data-kind="info">{tt('terminal.exited', { alias: activeTab.alias })}{activeTab.detail !== undefined ? ' (' + activeTab.detail + ')' : ''}</div>
       )}
-      {activeTab?.status === 'error' && <div className={css.banner} data-kind="error">{tt('terminal.error', { error: activeTab.detail ?? '' })}</div>}
-      {activeTab?.closeError !== undefined && <div className={css.banner} data-kind="error">{tt('terminal.closeFailed')}</div>}
-      {listError !== undefined && <div className={css.banner} data-kind="error">{tt('terminal.error', { error: listError })}</div>}
+      {activeTab?.status === 'error' && <div className={css.banner} data-kind="error" role="alert">{tt('terminal.error', { error: activeTab.detail ?? '' })}</div>}
+      {activeTab?.closeError !== undefined && <div className={css.banner} data-kind="error" role="alert">{tt('terminal.closeFailed')}</div>}
+      {listError !== undefined && <div className={css.banner} data-kind="error" role="alert">{tt('terminal.error', { error: listError })}</div>}
       <div className={css.termWrap}>
         <div ref={containerRef} className={css.termContainer} data-dsh-part="terminal" />
         {terminalTabs.length === 0 && (

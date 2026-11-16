@@ -95,6 +95,13 @@ export function DeployTab({ api, active }: DeployTabProps) {
       setError(tt('deploy.error.noRollback'))
       return
     }
+    // This is the most destructive action in the panel: it runs arbitrary
+    // commands on many hosts at once. Every comparable action here confirms
+    // first (host delete, cluster run, stop-all), so deploying without one was
+    // an inconsistency as well as a gap. Name the plan, the target count and the
+    // rollback intent, because those are what an operator needs to re-check.
+    const targetCount = selected.length === 0 ? hosts.length : selected.length
+    if (!window.confirm(tt('deploy.confirm', { plan: planId.trim(), count: targetCount }))) return
     const plan: DeployPlanPayload = {
       id: planId.trim(),
       steps: filled.map((step, index) => ({
@@ -128,7 +135,7 @@ export function DeployTab({ api, active }: DeployTabProps) {
 
   return (
     <div className={css.panel}>
-      {error !== null && <div className={css.banner} data-kind="error">{error}</div>}
+      {error !== null && <div className={css.banner} data-kind="error" role="alert">{error}</div>}
       {notice !== null && <div className={css.banner} data-kind="info">{notice}</div>}
 
       <section className={css.formCard}>
