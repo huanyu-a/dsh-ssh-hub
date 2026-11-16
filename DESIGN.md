@@ -215,6 +215,7 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | `src/audit/{audit-log,recorder}.ts` | 全新 | P0-b |
 | `src/inspect/{checks,inspection,tools}.ts` | 全新 | P0-d |
 | `src/monitor/{loop,metrics}.ts` | 全新 | P1-e / P1-b |
+| `src/monitor/metrics.ts` | `forget(alias)`：删主机时一并清掉它的指标历史 | 历史只按别名索引，留着会串到同名的新主机 |
 | `src/client/panel/FleetTab.tsx` | 全新（第 6 个页签） | P1-f |
 | `src/client/panel/{SshPanel.tsx,controller.ts,panel.module.css}` | 加 `fleet` 页签、`badge[data-status]` 的 error/warn/pending 三态 | P1-f |
 | `src/routes.ts` | 新增 7 条路由（monitor / monitor-tick / inspection / inspection-diff / alerts / metrics / security） | P1-e / P1-f |
@@ -234,7 +235,7 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 
 | 层级 | 方法 | 实测结果 |
 |---|---|---|
-| 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机（null 冻结 / 冷却 / 连续轮数）、部署状态机、日志命令构造与解析、指标分级与滚动聚合、监控循环（重叠保护/幂等启停/上界） | ✅ 199 测试 / 13 文件全绿 |
+| 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机（null 冻结 / 冷却 / 连续轮数）、部署状态机、日志命令构造与解析、指标分级与滚动聚合、监控循环（重叠保护/幂等启停/上界） | ✅ 202 测试 / 13 文件全绿 |
 | 类型 | `tsc --noEmit`（strict）+ `tsc -p tsconfig.build.json` | ✅ 通过 |
 | 契约 | 每个工具必须有 `output: { schema, render }`（缺失会让 cordis 回滚整个 entry，症状是「路由全 401」） | ✅ 15 个工具全部注册 |
 | 打包 | `npm pack` 后解包逐文件比对 SHA-256 | ✅ 61 个文件与磁盘一致 |

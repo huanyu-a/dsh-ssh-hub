@@ -152,7 +152,8 @@ npm run check                  # typecheck + test + build + pack 校验
 
 指标分级落盘：`raw`(24h) → `1m`(30d) → `15m`(90d) → `1h`(永久)。滚动聚合按
 `metric|at` 键合并，重复聚合不会产生重复桶；盲探针不进均值，只有盲探针的桶
-`value: null` 但样本数照记。
+`value: null` 但样本数照记。删主机时它的指标历史一并清掉——历史只按别名索引，
+留着会让后来同名的主机继承别人的数字，而那些数字看起来是真的。
 
 面板新增第 6 个页签「机群」：监控武装状态 → 上一轮超限/盲探针 → 与上一轮的变化集 →
 告警状态与事件 → 磁盘趋势迷你图 → 安全态势。页签里**没有**启停监控的按钮：
@@ -211,7 +212,7 @@ src/
 scripts/
   verify-monitor.mjs    装好后对运行中的插件做端到端验收
   verify-ssh2-import.mjs 独立证明 ssh2 的 CJS 导入形式在真实 node 里可用
-tests/                  199 个测试
+tests/                  202 个测试
 ```
 
 ---
@@ -220,7 +221,7 @@ tests/                  199 个测试
 
 ```
 Test Files  13 passed (13)
-     Tests  199 passed (199)
+     Tests  202 passed (202)
 ```
 
 其中 `tests/ssh-e2e.test.ts` 会起一个**真实的 ssh2 服务端**（自签 RSA 主机密钥、

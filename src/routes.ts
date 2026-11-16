@@ -316,6 +316,10 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
           try {
             engine.dropAlias(alias)
             store.delete(alias)
+            // Metric history is keyed by alias alone, so it has to go with the
+            // host. Leaving it behind lets the next host to reuse this name
+            // inherit another machine's numbers, and those numbers look real.
+            deps.metrics?.forget(alias)
             writeJson(res, 200, { ok: true })
           } catch (error) {
             writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })

@@ -28,7 +28,7 @@
  * with `tail` without a tool.
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { dshHome } from '../dsh-home.ts'
 import type { CheckResult } from '../inspect/checks.ts'
@@ -162,6 +162,25 @@ export class MetricStore {
     const path = tierPath(alias, tier, this.root)
     mkdirSync(join(path, '..'), { recursive: true })
     appendFileSync(path, entries.map(entry => JSON.stringify(entry)).join('\n') + '\n', 'utf8')
+  }
+
+  /**
+   * Delete every stored series for one alias.
+   *
+   * Called when a host is removed from the store: its metric history is keyed
+   * only by alias, so leaving it behind means a later host that happens to
+   * reuse the name inherits a stranger's numbers. That is worse than losing
+   * history, because the numbers look plausible.
+   *
+   * @param alias - the host alias.
+   * @returns true when something was removed.
+   */
+  forget(alias: string): boolean {
+    const dir = join(this.root, aliasStem(alias))
+    if (!existsSync(dir)) return false
+    // One directory per alias; removing it takes every tier file with it.
+    rmSync(dir, { recursive: true, force: true })
+    return true
   }
 
   /** Read one tier. */

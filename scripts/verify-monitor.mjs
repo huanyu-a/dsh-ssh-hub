@@ -18,6 +18,9 @@
 
 import { createServer } from 'node:net'
 import { generateKeyPairSync } from 'node:crypto'
+import { existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 // ssh2 is CommonJS: a named ESM import only works under a bundler/test
 // transform, so a plain `node` run needs the default-import form.
 import ssh2 from 'ssh2'
@@ -189,7 +192,22 @@ if (!encrypted) {
   console.log('      (plaintext storage: encryptCredentials and a master secret must BOTH be set)')
 }
 
-// --- clean up ------------------------------------------------------------
+// --- removing the host takes its metric history with it ------------------
+// Metric files are keyed by alias alone. If a host is deleted and a later
+// host reuses the name, leftover history would be attributed to the wrong
+// machine — and it would look plausible, which is worse than empty.
+const metricsRoot = join(homedir(), '.dsh', 'dsh-ssh-hub', 'metrics')
+const hostDir = join(metricsRoot, ALIAS)
+const existedBeforeDelete = existsSync(hostDir)
 await removeHost(ALIAS)
+const stillThere = existsSync(hostDir)
+if (existedBeforeDelete && stillThere) {
+  fail(`deleting the host left its metric history behind at ${hostDir}`)
+}
+pass(existedBeforeDelete
+  ? 'deleting the host removed its metric history'
+  : 'metric history was absent before the delete (nothing to clean)')
+
+// --- clean up ------------------------------------------------------------
 await server.stop()
 console.log('\nVERIFY OK  monitoring chain works end to end through the running plugin')

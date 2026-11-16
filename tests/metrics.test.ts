@@ -242,3 +242,36 @@ describe('samplesFromRound', () => {
     expect(samples).toEqual([])
   })
 })
+
+describe('MetricStore.forget', () => {
+  it('removes every tier for one alias and leaves the others alone', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-metrics-forget-'))
+    const store = new MetricStore(root)
+    store.record('gone', [{ at: NOW, metric: 'disk-usage', value: 50 }])
+    store.record('kept', [{ at: NOW, metric: 'disk-usage', value: 60 }])
+    expect(store.readTier('gone', 'raw')).toHaveLength(1)
+
+    expect(store.forget('gone')).toBe(true)
+    expect(existsSync(join(root, 'gone'))).toBe(false)
+    expect(store.readTier('gone', 'raw')).toEqual([])
+    expect(store.readTier('gone', '1m')).toEqual([])
+    // The other host is untouched: removal must not be a directory-wide wipe.
+    expect(store.readTier('kept', 'raw')).toHaveLength(1)
+  })
+
+  it('reports false when there is nothing to remove', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-metrics-forget2-'))
+    const store = new MetricStore(root)
+    expect(store.forget('never-seen')).toBe(false)
+  })
+
+  it('deletes by the sanitised stem, not the raw alias', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dsh-metrics-forget3-'))
+    const store = new MetricStore(root)
+    // A dot in the alias lands as an underscore on disk; forget has to use the
+    // same mapping or it would look in the wrong place and silently do nothing.
+    store.record('a.b', [{ at: NOW, metric: 'disk-usage', value: 50 }])
+    expect(store.forget('a.b')).toBe(true)
+    expect(store.readTier('a.b', 'raw')).toEqual([])
+  })
+})
