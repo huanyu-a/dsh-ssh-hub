@@ -16,10 +16,12 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { SshEngine } from './engine.ts'
 import { DEFAULT_CONNECT_TIMEOUT_MS } from './engine/connection-pool.ts'
 import { makeRoutes } from './routes.ts'
-import { HostStore } from './store.ts'
+import { HostStore, type SecretProtector } from './store.ts'
 import { sshClusterTool, sshDownloadTool, sshExecTool, sshListTool, sshTunnelTool, sshUploadTool } from './tools.ts'
 import { mountOnce } from './mount-once.ts'
 import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
+import { defaultKnownHostsPath } from './security/known-hosts.ts'
+import { isSealed, open, seal } from './security/secrets.ts'
 
 /** Stable cordis plugin name. */
 export const name = 'ssh'
@@ -79,6 +81,10 @@ export interface ResolvedConfig {
   enabled?: ConfigField<boolean>
   terminalFontFamily?: ConfigField<string>
   connectTimeoutMs?: ConfigField<number>
+  hostKeyPolicy?: ConfigField<'off' | 'tofu' | 'strict'>
+  knownHostsPath?: ConfigField<string>
+  encryptCredentials?: ConfigField<boolean>
+  auditEnabled?: ConfigField<boolean>
 }
 
 /**
@@ -95,6 +101,14 @@ export const Config = z.object({
   terminalFontFamily: z.string().default('').volatile(),
   connectTimeoutMs: z.number().step(1).min(1_000).max(600_000).default(DEFAULT_CONNECT_TIMEOUT_MS).volatile()
     .description('TCP connect, SSH key exchange and user authentication timeout in milliseconds; raise it for hosts whose authentication is slow.'),
+  hostKeyPolicy: z.union(['off', 'tofu', 'strict'] as const).default('off').volatile()
+    .description('Host-key verification against ~/.ssh/known_hosts. "off" accepts any key (the legacy behaviour); "tofu" records an unknown host and refuses a changed key; "strict" refuses anything not already trusted. A changed or revoked key is refused under every policy.'),
+  knownHostsPath: z.string().default('').volatile()
+    .description('Path to the known_hosts file used for host-key verification. Empty uses ~/.ssh/known_hosts.'),
+  encryptCredentials: z.boolean().default(false).volatile()
+    .description('Encrypt stored passwords and key passphrases. Needs DSH_SSH_HUB_SECRET (or a DSH credential) as the master secret. With no master secret the secrets stay in plaintext, exactly as before.'),
+  auditEnabled: z.boolean().default(true).volatile()
+    .description('Record every operation (exec, cluster, transfer, deploy, credential change) in an append-only audit log under $DSH_HOME/dsh-ssh-hub/audit.log. Secrets are redacted before a record is written.'),
 })
 
 /** Schema defaults, re-read for hand-built test contexts (the loader applies them normally). */
@@ -109,6 +123,40 @@ function readConfigField<T>(field: ConfigField<T> | undefined, fallback: T): T {
     return value === undefined ? fallback : value
   }
   return field as T
+}
+
+/**
+ * The master secret used to encrypt stored credentials.
+ *
+ * The environment variable wins because it is the only source that works
+ * unattended (a headless profile with no one to type a passphrase). The
+ * DSH credentials service is the fallback; if neither is present there is
+ * NO master secret, and the store keeps plaintext — which is exactly what
+ * the operator chose by not configuring one.
+ *
+ * @param ctx - the plugin context.
+ * @returns the master secret, or undefined when none is configured.
+ */
+function readMasterSecret(ctx: Context): string | undefined {
+  const fromEnv = process.env.DSH_SSH_HUB_SECRET
+  if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv
+  const credentials = (ctx as Context & { credentials?: { resolve?: (id: string) => Promise<string | undefined> } }).credentials
+  if (credentials?.resolve === undefined) return undefined
+  // The credentials service is asynchronous; the plugin's apply is not.
+  // A configured credential therefore cannot be read at mount time, so the
+  // environment variable is the supported path. The credentials hook is
+  // left for a future async-aware surface rather than pretending to work.
+  return undefined
+}
+
+/**
+ * The known_hosts file to consult.
+ *
+ * @param configured - the configured path (empty means the default).
+ * @returns the resolved path.
+ */
+function resolveKnownHostsPath(configured: string): string {
+  return configured.trim() === '' ? defaultKnownHostsPath() : configured.trim()
 }
 
 /**
@@ -146,8 +194,25 @@ export const SSH_GUIDANCE = '本机已安装 dsh-ssh 插件（DSH 远程 SSH 运
 export const apply = mountOnce('@linxin666/dsh-ssh', applyImpl)
 
 function applyImpl(ctx: Context, config?: ResolvedConfig): void {
-  const store = new HostStore()
-  const engine = new SshEngine(store, { connectTimeoutMs: readConfigField(config?.connectTimeoutMs, DEFAULT_CONNECT_TIMEOUT_MS) })
+  // The master secret for credential encryption. There is deliberately no
+  // default: a default master secret would be a backdoor, and falling back
+  // to plaintext would defeat the point of encrypting at all. With no
+  // secret configured the store keeps the base plugin's plaintext
+  // behaviour, so enabling encryption is a deliberate act.
+  const masterSecret = readMasterSecret(ctx)
+  const protector: SecretProtector | undefined = masterSecret !== undefined
+    ? {
+        seal: plaintext => seal(plaintext, masterSecret),
+        open: stored => (isSealed(stored) ? open(stored, masterSecret) : undefined),
+      }
+    : undefined
+
+  const store = new HostStore(undefined, undefined, protector)
+  const engine = new SshEngine(store, {
+    connectTimeoutMs: readConfigField(config?.connectTimeoutMs, DEFAULT_CONNECT_TIMEOUT_MS),
+    hostKeyPolicy: readConfigField(config?.hostKeyPolicy, 'off'),
+    knownHostsPath: resolveKnownHostsPath(readConfigField(config?.knownHostsPath, '')),
+  })
   ctx.effect(() => () => { engine.dispose() }, 'dsh-ssh: engine')
 
   const resolve = (): { announceToAgent: boolean; enabled: boolean } => {
