@@ -285,6 +285,22 @@ Description 三列**全空**，却占掉约 40% 宽度，把「主机」和「�
 改为 `hasOwnedTunnels()` 纯函数门控（纯函数便于断言，已补 5 个测试：null/空、全外部、
 纯自有、无 source 标记的旧行、混合）。
 
+**`prefers-reduced-motion` 改为整棵子树覆盖（P3-m）。** 原先它逐个列出 10 个选择器来关动画。
+实测发现 `.primaryButton` 声明了 `transition` 却**不在那个清单里**——开启「减少动态效果」后，
+最主要的行动按钮仍然会动。逐个列举的写法必然会随样式表演进漏项。改为
+`.panel, .panel *, .panel *::before, .panel *::after { transition: none !important; animation: none !important }`：
+一条规则不可能落后，且严格限定在 `.panel` 内，不干扰宿主自身的动效设置。
+
+浏览器双向实测：开启偏好后三个页签全部元素（101 / 36 / 73）动画与过渡为 0；关闭偏好时
+仍有 26 / 8 / 9 个元素带过渡（含 `primaryButton`）——**动画没有被误删，偏好被正确尊重**。
+
+**批量执行页的 Run 与后端规则对齐（P3-m）。** 后端硬性要求「aliases / environment / tags
+至少一项非空」（`src/engine/cluster.ts`），否则 400；前端 `Run` 却只检查命令是否为空。
+于是用户填了命令、点了 Run，才收到一条他从没被告知的规则。改为 `canRun = 命令非空 && 至少一个
+选择器`，并在按钮旁用 `--ssh-warn-text` 说明原因（实测 4.93 / 11.27，两种语言都加了键）。
+禁用态按钮文字对比度 1.46 / 1.89 低于 4.5，但 WCAG 1.4.3 **明确豁免禁用态控件**，且
+提示文字已独立完整说明原因——这是有意为之，不是遗漏。
+
 **纪律：颜色写进样式表前必须先被算过。** 两个审计脚本已进 `npm run check`：
 `verify-contrast.mjs` 查我手工指定的关键配对，`audit-text-contrast.mjs` 扫**全部** 70 条含
 `color:` 的规则（308 次测量，深浅两套皮肤 × 全部可能落点）。任一低于门槛即非零退出。

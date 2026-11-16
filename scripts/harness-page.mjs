@@ -72,9 +72,11 @@ body {
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
 }
-/* Enough room for the panel to lay out as it does in the sidebar-plus-main
-   split, so wrapping and sticky columns behave realistically. */
-#root { width: 1180px; min-height: 900px; }
+/* The panel must be able to shrink with the viewport, otherwise a fixed width
+   hides the product's own responsive behaviour: a hard 1180px root made an
+   885px window report a horizontal overflow that the real panel does not have.
+   The runner passes an explicit width when it wants a fixed one. */
+#root { width: 100%; max-width: 1180px; min-height: 900px; }
 </style>
 </head>
 <body>
@@ -85,7 +87,7 @@ body {
 (function () {
   var params = new URLSearchParams(location.search)
   if (params.get('skin') === 'dark') document.body.setAttribute('data-ds-dark-theme', '')
-  if (params.get('narrow') === '1') { document.getElementById('root').style.width = '720px' }
+  if (params.get('narrow') === '1') { document.getElementById('root').style.maxWidth = '720px' }
 })()
 </script>
 <script src="./harness.js"></script>

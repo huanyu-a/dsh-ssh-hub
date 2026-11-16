@@ -29,8 +29,16 @@ export function ClusterTab({ api }: ClusterTabProps) {
   const [results, setResults] = useState<ClusterResult[] | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  // Mirror the server's rule: a command alone is not enough, because running it
+  // against the whole fleet by accident is exactly what the selector requirement
+  // exists to prevent. See src/engine/cluster.ts.
+  const hasSelector = splitList(aliases).length > 0
+    || environment.trim() !== ''
+    || splitList(tags).length > 0
+  const canRun = command.trim() !== '' && hasSelector
+
   const run = async (): Promise<void> => {
-    if (command.trim() === '' || running) return
+    if (!canRun || running) return
     if (!window.confirm(tt('cluster.confirm'))) return
     setRunning(true)
     setError(null)
@@ -63,8 +71,14 @@ export function ClusterTab({ api }: ClusterTabProps) {
           <input className={css.input} placeholder={tt('cluster.environment')} value={environment} onChange={event => { setEnvironment(event.target.value) }} />
           <input className={css.input} placeholder={tt('cluster.tags')} value={tags} onChange={event => { setTags(event.target.value) }} />
         </div>
-        <div>
-          <button type="button" className={css.primaryButton} disabled={running || command.trim() === ''} onClick={() => { void run() }}>{tt('cluster.run')}</button>
+        <div className={css.clusterActions}>
+          <button type="button" className={css.primaryButton} disabled={running || !canRun} onClick={() => { void run() }}>{tt('cluster.run')}</button>
+          {/* The server rejects a run with no selector outright, so the button
+              waits for one too. Leaving it enabled meant the user typed a
+              command, pressed Run, and got a 400 explaining the rule they were
+              never told: the filters are placeholders-only, so the requirement
+              had no visible home. Say it before the click, not after. */}
+          {!canRun && <span className={css.inlineHint}>{tt('cluster.needSelector')}</span>}
         </div>
       </div>
       {error !== null && <div className={css.banner} data-kind="error">{tt('common.error', { error })}</div>}
