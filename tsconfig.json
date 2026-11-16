@@ -16,7 +16,10 @@
     "strict": true,
     "noEmit": true,
     "incremental": true,
-    "tsBuildInfoFile": "lib/tsconfig.typecheck.tsbuildinfo",
+    // Type-check cache lives outside `lib` so it can never be mistaken for a
+    // shipped artifact (the packaging check compares `lib` against the
+    // tarball, and npm correctly excludes a stray .tsbuildinfo).
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.typecheck.tsbuildinfo",
     "skipLibCheck": true,
     "isolatedModules": true,
     "esModuleInterop": true,

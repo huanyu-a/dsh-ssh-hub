@@ -24,6 +24,17 @@ import {
   toCheckResult,
 } from './checks.ts'
 
+/**
+ * How many hosts one inspection round works on at a time.
+ *
+ * Chosen to finish a 50-host sweep inside the default 60-second interval while
+ * keeping the number of simultaneously open SSH connections in the same range
+ * the connection pool already uses for other fan-out (8). Raising it trades
+ * sockets for wall clock; lowering it risks a round that outlasts its own
+ * timer and reports "上一轮尚未结束" instead of a result.
+ */
+export const DEFAULT_INSPECT_CONCURRENCY = 8
+
 /** One inspection round. */
 export interface InspectionRound {
   /** Epoch milliseconds when the round started. */
@@ -86,13 +97,17 @@ export class Inspector {
     targets: string[],
     checkIds?: string[],
     timeoutMs = 30_000,
+    concurrency = DEFAULT_INSPECT_CONCURRENCY,
   ): Promise<InspectionRound> {
     const startedAt = Date.now()
     const checks = selectChecks(checkIds)
-    // Each (host, check) pair is one command. The engine's own pool keeps
-    // the connection count bounded, and the cluster helper fans out.
+    // Each (host, check) pair is one command.
     const results: CheckResult[] = []
-    for (const alias of targets) {
+    /**
+     * Inspect one host: its checks run in order, because they share that
+     * host's connection and a per-host sequence reads as one coherent sample.
+     */
+    const inspectHost = async (alias: string): Promise<void> => {
       for (const check of checks) {
         // One unreachable host must not abort the round.
         //
@@ -119,6 +134,34 @@ export class Inspector {
         }
       }
     }
+    // Bounded fan-out across hosts.
+    //
+    // A serial sweep is O(hosts) round trips: at 50 hosts and six checks that
+    // is 300 sequential commands, which can outlast the monitoring interval
+    // and make "every 60 seconds" a lie. Unbounded fan-out is worse — it asks
+    // the machine to hold one connection per host, which is exactly what a
+    // consumer desktop cannot do at 50+ targets. So the hosts are walked by a
+    // fixed worker pool: enough parallelism to finish inside the interval,
+    // never more sockets than the pool limit.
+    const workers = Math.max(1, Math.min(concurrency, targets.length))
+    const queue = [...targets]
+    const drain = async (): Promise<void> => {
+      for (;;) {
+        const alias = queue.shift()
+        if (alias === undefined) return
+        await inspectHost(alias)
+      }
+    }
+    await Promise.all(Array.from({ length: workers }, () => drain()))
+    // Restore a deterministic order: with parallel workers the completion
+    // order is a race, and the panel's per-host grouping and the round diff
+    // both read better (and compare equal across runs) when the rows follow
+    // the target and check order rather than whichever host answered first.
+    const aliasRank = new Map(targets.map((alias, index) => [alias, index]))
+    const checkRank = new Map(checks.map((check, index) => [check.id, index]))
+    results.sort((a, b) =>
+      (aliasRank.get(a.alias) ?? 0) - (aliasRank.get(b.alias) ?? 0)
+      || (checkRank.get(a.checkId) ?? 0) - (checkRank.get(b.checkId) ?? 0))
     const round: InspectionRound = {
       startedAt,
       durationMs: Date.now() - startedAt,

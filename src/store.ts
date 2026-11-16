@@ -17,6 +17,7 @@ import { dirname, join, resolve } from 'node:path'
 import { dshHome } from './dsh-home.ts'
 import type { HostPayload, ImportResult, ImportSkipBlock, ImportSkipReason, SshHostEntry, SshHostSummary } from './protocol.ts'
 import { readSshConfigBlocks } from './ssh-config.ts'
+import { isSealed } from './security/secrets.ts'
 
 /**
  * Encrypts and decrypts the secrets stored alongside a host entry.
@@ -154,7 +155,20 @@ export class HostStore {
     if (this.protector === undefined) return entry
     const password = this.protector.open(entry.auth.password)
     const passphrase = this.protector.open(entry.auth.passphrase)
-    if (password === undefined && passphrase === undefined) return entry
+    if (password === undefined && passphrase === undefined) {
+      // A sealed value the protector could not open means the master key is
+      // missing or wrong. Dropping it is the honest outcome: handing the
+      // envelope object to the SSH layer produces "no authentication methods"
+      // and hides the real cause, while keeping it would look like a password.
+      return {
+        ...entry,
+        auth: {
+          ...entry.auth,
+          password: isSealed(entry.auth.password) ? undefined : entry.auth.password,
+          passphrase: isSealed(entry.auth.passphrase) ? undefined : entry.auth.passphrase,
+        },
+      }
+    }
     return {
       ...entry,
       auth: {
@@ -477,6 +491,30 @@ export class HostStore {
     writeFileSync(tmp, JSON.stringify(file, null, 2) + '\n', { encoding: 'utf8', mode: 0o600 })
     renameSync(tmp, this.path)
     this.cache = undefined
+  }
+
+  /**
+   * Rewrite every entry's stored secrets under this store's protector.
+   *
+   * Rotation needs one write that changes the sealing key for the WHOLE file.
+   * Calling `update()` per entry cannot do that: `update` reads the stored
+   * file, decrypts it with the current protector, and re-seals with the same
+   * one — so it would rewrite each entry under the old key and the operator's
+   * new key would open nothing.
+   *
+   * This method takes the entries already decrypted (by `list()` under the
+   * previous protector) and re-seals them in a single `save()`, so there is no
+   * window where half the file is sealed with one key and half with another.
+   *
+   * @param entries - the entries with plaintext secrets.
+   */
+  resealAll(entries: SshHostEntry[]): void {
+    const file = this.load()
+    const next: StoreFile = {
+      ...file,
+      hosts: entries.map(entry => this.encryptEntry(entry)),
+    }
+    this.save(next)
   }
 }
 

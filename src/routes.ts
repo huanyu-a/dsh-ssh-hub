@@ -20,12 +20,96 @@ import { TerminalSessionRegistry } from './engine/terminal-sessions.ts'
 import { readJsonBody, writeJson } from './http.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import { SSH_API, type HostPayload, type TerminalServerFrame } from './protocol.ts'
+import type { DeployRunRow, LogSearchRow, MasterSecretPayload, MasterSecretResult, DeployHostRow, LogHostRow } from './protocol.ts'
+import type { ActivityHistory } from './activity/history.ts'
 import type { HostStore } from './store.ts'
 import type { Monitor } from './monitor/loop.ts'
 import { TIERS, type MetricStore } from './monitor/metrics.ts'
 import type { Inspector } from './inspect/inspection.ts'
 import type { AlertEngine } from './alerting/rules.ts'
 import type { AlertEvent } from './alerting/tools.ts'
+import { deploy, type DeployPlan, type DeployResult } from './deploy/orchestrator.ts'
+import { searchLogs, type LogSearchRequest, type LogSearchResult } from './logs/search.ts'
+
+/**
+ * Project a finished deployment into its history record.
+ *
+ * The panel needs one row per host with the step that failed, not the nested
+ * batch structure the orchestrator returns — a batch is an implementation
+ * detail of concurrency, while "which host broke and at which step" is the
+ * question an operator actually asks.
+ *
+ * @param result - the orchestrator's outcome.
+ * @param hostCount - how many hosts the run intended to reach.
+ * @returns the record to persist.
+ */
+function deployRunFrom(result: DeployResult, hostCount: number): DeployRunRow {
+  const hosts: DeployHostRow[] = []
+  for (const batch of result.batches) {
+    for (const host of batch.results) {
+      hosts.push({
+        alias: host.alias,
+        ok: host.ok,
+        // `DeployHostResult` does not report per-step detail — it reports the
+        // last exit code and whether the health probe passed. So the record
+        // carries the same facts rather than inventing step names.
+        steps: [],
+        ...(host.healthy === undefined ? {} : { healthy: host.healthy }),
+        ...(host.rolledBack === undefined ? {} : { rolledBack: host.rolledBack }),
+        ...(host.error === undefined ? {} : { error: host.error }),
+        ...(host.exitCode === undefined || host.exitCode === null ? {} : { exitCode: host.exitCode }),
+      })
+    }
+  }
+  // Hosts skipped after an earlier failure have no result row; they still
+  // belong in the record, marked as not attempted.
+  for (const alias of result.skipped) {
+    if (hosts.some(row => row.alias === alias)) continue
+    hosts.push({ alias, ok: false, steps: [], error: 'skipped: an earlier batch failed' })
+  }
+  return {
+    id: `${result.planId}-${String(Date.now())}`,
+    planId: result.planId,
+    at: Date.now(),
+    batchSize: result.batches[0]?.aliases.length ?? hostCount,
+    hostCount,
+    ok: result.ok,
+    hosts,
+  }
+}
+
+/**
+ * Project a finished log search into its history record.
+ * @param result - the search outcome.
+ * @param pattern - the pattern that was searched for.
+ * @param source - the log source that was read.
+ * @param targets - the hosts that were asked.
+ * @returns the record to persist.
+ */
+function logSearchFrom(
+  result: LogSearchResult,
+  pattern: string,
+  source: string,
+  targets: string[],
+): LogSearchRow {
+  return {
+    at: Date.now(),
+    pattern,
+    source,
+    targets,
+    hosts: result.results.map(host => ({
+      alias: host.alias,
+      ok: host.ok,
+      lines: host.lines,
+      // The wire shape names the count `total`; the search layer reports it as
+      // `totalMatches`. Translating here keeps one name on the panel side.
+      total: host.totalMatches ?? host.lines.length,
+      truncated: host.truncated === true,
+      ...(host.error === undefined ? {} : { error: host.error }),
+      ...(host.durationMs === undefined ? {} : { durationMs: host.durationMs }),
+    })),
+  }
+}
 
 /** Cap on declared upload bodies (staged to disk before SFTP). */
 const MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
@@ -41,6 +125,25 @@ const terminalWss = new WebSocketServer({ noServer: true })
 function queryParam(url: URL, name: string): string | undefined {
   const value = url.searchParams.get(name)
   return value === null ? undefined : value
+}
+
+/**
+ * Parse a `limit` query value into a bounded positive integer.
+ *
+ * A limit is a display concern, so a malformed or absent value falls back to
+ * the default instead of failing the request: a panel asking for history
+ * should get history, not a 400 about its own query string.
+ *
+ * @param raw - the raw query value, if any.
+ * @param fallback - the value to use when absent or unparsable.
+ * @param max - the hard ceiling.
+ * @returns a bounded limit.
+ */
+function clampLimit(raw: string | undefined, fallback: number, max: number): number {
+  if (raw === undefined || raw === '') return fallback
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) return fallback
+  return Math.min(Math.floor(value), max)
 }
 
 /** Route family dependencies. */
@@ -76,6 +179,20 @@ export interface SshRoutesDeps {
   stagingDir?: string
 /** Upload byte cap override (tests); defaults to MAX_UPLOAD_BYTES. */
 maxUploadBytes?: number
+  /** The key file the panel manages (for the status report). */
+  keyPath?: string
+  /** Aliases whose stored credentials are still plaintext. */
+  plaintext?: () => { aliases: string[] }
+  /**
+   * Store or clear the master secret. Mutating, so the route fences it
+   * exactly like any other write; the operation itself decides whether a
+   * rotation is required and refuses a change that would strand credentials.
+   */
+  setSecret?: (payload: MasterSecretPayload) => MasterSecretResult
+  /** Deployment history (recorded runs, newest first). */
+  deployHistory?: ActivityHistory<DeployRunRow>
+  /** Log-search history (recorded searches, newest first). */
+  logHistory?: ActivityHistory<LogSearchRow>
 }
 
 /**
@@ -212,7 +329,71 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
       handler: async (req, res) => {
         if (!guard(req, res, 'GET')) return
         const status = deps.security?.()
-        writeJson(res, 200, status ?? { encryptConfigured: false, secret: { available: false, source: 'none' } })
+        writeJson(res, 200, {
+          ...(status ?? { encryptConfigured: false, secret: { available: false, source: 'none' } }),
+          // The plaintext list belongs with the posture, not in a separate
+          // call: "encryption is on" and "which entries are still readable
+          // without the key" are one question with one answer.
+          ...(deps.plaintext === undefined ? {} : { plaintextAliases: deps.plaintext().aliases }),
+          ...(deps.keyPath === undefined ? {} : { keyPath: deps.keyPath }),
+        })
+      },
+    },
+    {
+      // Store or clear the master secret. This is a WRITE, so it takes the
+      // loopback fence and the POST method like every other mutation. The
+      // response reports the resulting source and how many entries were
+      // re-encrypted, because a secret change that silently skipped rotation
+      // would lock the operator out of their own credentials.
+      kind: 'exact',
+      path: '/api/dsh-ssh/security/secret',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        if (deps.setSecret === undefined) {
+          writeJson(res, 200, { ok: false, source: 'none', rotated: 0, error: 'secret management is not mounted' })
+          return
+        }
+        let payload: MasterSecretPayload
+        try {
+          payload = (await readJsonBody(req)) as MasterSecretPayload
+        } catch (error) {
+          writeJson(res, 400, { error: error instanceof Error ? error.message : 'invalid JSON body' })
+          return
+        }
+        if (payload.action !== 'set' && payload.action !== 'clear') {
+          writeJson(res, 400, { error: "action must be 'set' or 'clear'" })
+          return
+        }
+        try {
+          writeJson(res, 200, deps.setSecret(payload))
+        } catch (error) {
+          // A throw here would become an empty 400 from the webserver, which
+          // tells the operator nothing about which step failed.
+          writeJson(res, 500, { ok: false, source: 'none', rotated: 0, error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    },
+    {
+      // Recorded deployment runs. A rollout's outcome matters after the
+      // panel has moved on, so it is retained rather than shown once.
+      kind: 'exact',
+      path: '/api/dsh-ssh/deploy/history',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const limit = clampLimit(queryParam(url, 'limit'), 20, 100)
+        writeJson(res, 200, { runs: deps.deployHistory?.read(limit) ?? [] })
+      },
+    },
+    {
+      // Recorded log searches, same reasoning as the deployment history.
+      kind: 'exact',
+      path: '/api/dsh-ssh/logs/history',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'GET')) return
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        const limit = clampLimit(queryParam(url, 'limit'), 20, 100)
+        writeJson(res, 200, { searches: deps.logHistory?.read(limit) ?? [] })
       },
     },
     {
@@ -246,6 +427,89 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
           ...(metric !== undefined ? { metric } : {}),
           series: deps.metrics.series(alias, tier.name, metric, limit),
         })
+      },
+    },
+    {
+      // Run a deployment plan from the panel. A write with real consequences
+      // on remote machines, so: loopback fence, POST only, and the outcome is
+      // recorded into the history before it is returned.
+      kind: 'exact',
+      path: '/api/dsh-ssh/deploy',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        let body: { plan?: DeployPlan; targets?: string[] }
+        try {
+          body = (await readJsonBody(req)) as { plan?: DeployPlan; targets?: string[] }
+        } catch (error) {
+          writeJson(res, 400, { error: error instanceof Error ? error.message : 'invalid JSON body' })
+          return
+        }
+        const plan = body.plan
+        if (plan === undefined || typeof plan.id !== 'string' || !Array.isArray(plan.steps) || plan.steps.length === 0) {
+          writeJson(res, 400, { error: 'plan.id and a non-empty plan.steps are required' })
+          return
+        }
+        // Every step needs a rollback command, or a failed batch cannot be
+        // undone; refuse such a plan here rather than discovering it mid-run.
+        const withoutRollback = plan.steps.filter(step => typeof step.rollbackCommand !== 'string' || step.rollbackCommand.trim() === '')
+        if (withoutRollback.length > 0) {
+          writeJson(res, 400, {
+            error: `every step needs a rollbackCommand; missing on: ${withoutRollback.map(step => step.name).join(', ')}`,
+          })
+          return
+        }
+        const targets = Array.isArray(body.targets) && body.targets.length > 0
+          ? body.targets.filter(alias => typeof alias === 'string' && alias !== '')
+          : store.list().map(entry => entry.alias)
+        if (targets.length === 0) {
+          writeJson(res, 400, { error: 'no hosts to deploy to' })
+          return
+        }
+        let result
+        try {
+          result = await deploy(engine, plan, targets)
+        } catch (error) {
+          writeJson(res, 500, { error: error instanceof Error ? error.message : String(error) })
+          return
+        }
+        const record = deployRunFrom(result, targets.length)
+        deps.deployHistory?.append(record)
+        writeJson(res, 200, { run: record, result })
+      },
+    },
+    {
+      // Cross-host log search. Read-only on the remote side, but it does run
+      // commands (journalctl / grep) on servers, so it stays fenced; and it is
+      // POST because the pattern and target set travel in the body.
+      kind: 'exact',
+      path: '/api/dsh-ssh/logs',
+      handler: async (req, res) => {
+        if (!guard(req, res, 'POST')) return
+        let body: { request?: LogSearchRequest; targets?: string[] }
+        try {
+          body = (await readJsonBody(req)) as { request?: LogSearchRequest; targets?: string[] }
+        } catch (error) {
+          writeJson(res, 400, { error: error instanceof Error ? error.message : 'invalid JSON body' })
+          return
+        }
+        const request = body.request
+        if (request === undefined || typeof request.pattern !== 'string' || request.pattern === '') {
+          writeJson(res, 400, { error: 'request.pattern is required' })
+          return
+        }
+        const targets = Array.isArray(body.targets) && body.targets.length > 0
+          ? body.targets.filter(alias => typeof alias === 'string' && alias !== '')
+          : store.list().map(entry => entry.alias)
+        let result
+        try {
+          result = await searchLogs(engine, request, targets)
+        } catch (error) {
+          writeJson(res, 500, { error: error instanceof Error ? error.message : String(error) })
+          return
+        }
+        const record = logSearchFrom(result, request.pattern, request.source ?? 'journal', targets)
+        deps.logHistory?.append(record)
+        writeJson(res, 200, { search: record })
       },
     },
     // ------------------------------------------------------------ hosts

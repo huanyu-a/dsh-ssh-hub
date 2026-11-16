@@ -167,21 +167,33 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | P2-a | 部署编排 | 分批发布 → 健康检查 → 失败自动回滚；无上一版时如实报告不可回滚 | ✅ 15 测试 |
 | P2-b | 跨机日志检索 | 按关键字 + 时间窗跨 N 台 grep，结果按主机聚合 | ✅ 20 测试 |
 
-### P3 · 体验与规模化（剩余部分）
+### P3 · 体验与规模化
 
-- 主机分组视图 / 一键巡检 / 告警到会话（action card 或 followup）
-- 交互式设定主密码（当前支持 `DSH_SSH_HUB_SECRET` 与 `DSH_SSH_HUB_SECRET_FILE`，尚无 GUI 录入）
-- 部署记录页签、日志检索结果页签（监控/巡检/告警页签已完成）
-- >50 台时的分级采集与背压（10–50 台当前规模下优先级低）
-
-> **已完成**：定时监控循环（`cordis-plugin-timer` 驱动）、指标四级分级落盘、
-> 面板「机群」页签、主密码文件来源、手动「立即巡检」。
+| 编号 | 能力 | 交付判据 | 状态 |
+|---|---|---|---|
+| P3-a | 主机分组视图 | 按 environment / tags 分组，`groupHosts` 与页签下拉；空组不渲染 | ✅ 已交付 |
+| P3-b | 交互式设定主密码 | 面板「机群 → 主密钥」录入或一键生成；设置后**已存明文凭据当场重新加密**；轮换先验证再提交新密钥、失败回滚旧密钥；有密文时拒绝删密钥 | ✅ 29 测试 + 14 项端到端断言 |
+| P3-c | 部署记录页签 | 计划录入（回滚命令必填）→ 分批执行 → 逐台展开；运行记录落 NDJSON，重开面板仍在 | ✅ 已交付 |
+| P3-d | 跨机日志检索页签 | 关键字 + journal/files + 时间窗；结果按检索→主机聚合；检索记录落盘 | ✅ 已交付 |
+| P3-e | 告警到会话 | 告警摘要进系统提示词：几台在报警、哪条规则、什么值；**循环未启动时明说「这个『无』不代表健康」** | ✅ 11 测试 |
+| P3-f | >50 台背压 | 巡检按固定 8 worker 池跨主机并发（原来是串行，50 台 × N 项会跑过自己的监控间隔）；结果按「目标序 → 检查项序」重排，避免完成顺序污染 diff | ✅ 7 测试 |
 
 > **当前版本的已知边界**：
 > - 监控循环**默认关闭**（`monitorEnabled: false`）。一个插件刚加载就去探测机群的定时器
 >   是个惊喜，不是功能；开启是显式决策。未开启时告警列表为空**不代表机群健康** ——
->   面板与 `hub_monitor` 都会把这一点说出来，因为「安静」和「没问题」看起来一样。
+>   面板、`hub_monitor` 与系统提示词都会把这一点说出来，因为「安静」和「没问题」看起来一样。
 > - 监控循环随插件的 `effect` 卸载而停止，DSH 关闭时不采集，不留孤儿定时器。
+> - **加密有两条生效路径**：`encryptCredentials` + 环境变量/文件密钥（原有），
+>   或面板自己写的密钥文件（面板的录入动作本身就是知情同意）。一个孤儿环境变量
+>   不会顺手改写凭据库，因为它仍需显式开关。
+> - **protector 按调用实时取密钥**，不在挂载时捕获，且 `rotateSecrets` **不得**给 store 换一个自带密钥的
+>   protector。捕获式的写法有两个方向的错：轮换后继续用旧密钥加密（密钥文件已换 → 凭据再也解不开），
+>   以及把 `open` 变成恒返回 `undefined`（同进程内读不出已有凭据）。改为「读旧密钥 → 提交新密钥 →
+>   一次重封 → 失败回滚旧密钥」后，两个方向都不会发生。`verify-secret-liveness.mjs` 在运行中的
+>   插件上验证这三个转换点。
+> - **密文但无密钥时必须诚实失败**：`decryptEntry` 会丢弃打不开的信封而不是把它当口令交给 ssh2，
+>   连接层则报「no password stored … encrypted and the master key is not available」。
+>   原来的表现是 ssh2 的 "All configured authentication methods failed"，让人去查服务器而不是查密钥。
 
 ---
 
@@ -220,13 +232,26 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | `src/client/panel/{SshPanel.tsx,controller.ts,panel.module.css}` | 加 `fleet` 页签、`badge[data-status]` 的 error/warn/pending 三态 | P1-f |
 | `src/routes.ts` | 新增 7 条路由（monitor / monitor-tick / inspection / inspection-diff / alerts / metrics / security） | P1-e / P1-f |
 | `src/alerting/{rules,notify,tools}.ts` | 全新 | P1-c |
+| `src/alerting/prompt-summary.ts` | 全新：把告警状态渲染进系统提示词 | P3-e |
+| `src/security/master-secret.ts` | 全新：密钥读写/来源判定/明文巡检/轮换 | P3-b |
+| `src/activity/history.ts` | 全新：部署与日志检索的 NDJSON 记录（上限 100 条，坏行跳过） | P3-c / P3-d |
+| `src/store.ts` | 加 `resealAll`；`decryptEntry` 丢弃打不开的信封 | P3-b：轮换需要「整个文件换密钥」的一次写入；逐条 `update` 用同一个 protector 重封等于什么都没换 |
+| `src/engine/connection-pool.ts` | 口令为空/不可解时报明确错误 | 把「密钥缺失」和「认证方式不对」区分开 |
+| `src/inspect/inspection.ts` | 串行 → 固定 8 worker 池 + 结果定序 | P3-f |
 | `src/deploy/{orchestrator,tools}.ts` | 全新 | P2-a |
 | `src/logs/{search,tools}.ts` | 全新 | P2-b |
+| `src/client/panel/{DeployTab,LogsTab}.tsx` | 全新（第 7、8 个页签） | P3-c / P3-d |
+| `src/client/panel/tabs.ts` | 全新：页签表唯一来源，`satisfies` 保证与 `SshTab` 联合类型穷尽一致 | 防止「组件写了但没人渲染」这类漏接 |
+| `src/client/panel/SshPanel.tsx` | 页签渲染改为 `Record<SshTab, () => ReactNode>` | 同上：漏一个页签变成编译错误，而不是一个点开空白的页签 |
+| `src/client/panel/FleetTab.tsx` | 加主密钥卡片（录入/生成/轮换/删除 + 明文主机清单） | P3-b |
 | `cordis.patch.yml` | 新增 | bundle 行（row id `ssh-hub`） |
 | `scripts/package-artifact.mjs`、`scripts/tarball-reader.mjs` | 全新 | 打包产物 SHA 校验 |
 | `scripts/verify-monitor.mjs`、`scripts/verify-ssh2-import.mjs` | 全新 | 装好后对**运行中的插件**做端到端验收，并独立证明 CJS 导入形式可用 |
+| `scripts/verify-routes.mjs` | 全新：发布 / 日志检索 / 主密钥三条链路的端到端验收，含「加密后凭据不再明文」「轮换后仍可认证」「无回滚命令被拒」 | P2-a / P2-b / P3-b |
+| `scripts/audit-store.mjs` | 全新：审计凭据库的密文/明文/孤儿密文分布 | P3-b 数据安全检查 |
+| `scripts/verify-client.mjs` | 加「8 个页签标签键都在产物里」的断言 | 客户端漏构建的回归 |
 
-> 面板不再"未改动"：新增第 6 个「机群」页签（P1-f），其余五个页签沿用基座。
+> 面板不再"未改动"：在原五个页签之后新增「机群 / 发布 / 日志」三个页签（P1-f、P3-c、P3-d）。
 > 新能力的路由与页签都只在本机回环地址应答，非回环请求返回 403。
 
 ---
@@ -235,11 +260,14 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 
 | 层级 | 方法 | 实测结果 |
 |---|---|---|
-| 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机（null 冻结 / 冷却 / 连续轮数）、部署状态机、日志命令构造与解析、指标分级与滚动聚合、监控循环（重叠保护/幂等启停/上界） | ✅ 202 测试 / 13 文件全绿 |
+| 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机、部署状态机、日志命令构造与解析、指标分级与滚动聚合、监控循环、主密钥读写/轮换/回滚/明文巡检、活动记录保留与坏行容忍、巡检背压与定序、页签表完整性 | ✅ 270 测试 / 18 文件全绿 |
 | 类型 | `tsc --noEmit`（strict）+ `tsc -p tsconfig.build.json` | ✅ 通过 |
 | 契约 | 每个工具必须有 `output: { schema, render }`（缺失会让 cordis 回滚整个 entry，症状是「路由全 401」） | ✅ 15 个工具全部注册 |
-| 打包 | `npm pack` 后解包逐文件比对 SHA-256 | ✅ 61 个文件与磁盘一致 |
-| 运行时 | 装进 desktop profile → `cordis_inspect` 查 Tool 清单 | ✅ 15 个工具在册（含 `hub_monitor`）；7 条新路由全部 200；Config 投影全部字段 |
+| 打包 | `npm pack` 后解包逐文件比对 SHA-256，并断言 `exports`/`main`/`types` 声明的每个路径都在 tarball 里 | ✅ 64 个文件与磁盘一致 |
+| 运行时 | 装进 desktop profile → `cordis_inspect` 查 Tool 清单与 Slot 树 | ✅ 15 个工具在册；`sidebar.panellist` 有 `ssh` 且 `main` 有同 key 页（两席一致才不空白）；11 条新路由全部 200 |
 | 真机 SSH | 内嵌 ssh2 Server（真实密钥交换/口令认证/exec）跑 connect/auth/exec/连接池复用/集群顺序/8 项巡检/指纹三策略 | ✅ 11 测试 |
 | CJS 导入 | `scripts/verify-ssh2-import.mjs` 在真实 node 进程里构造 Client、连接、执行 | ✅ 通过（vitest 的 CJS 互操作无法证明这一点，所以单独验证） |
-| 端到端 | `scripts/verify-monitor.mjs`：起假 SSH server → 经插件自己的 API 注册主机 → 触发一轮 → 回读巡检/指标/告警/安全态势 | ✅ 通过 |
+| 端到端（监控） | `scripts/verify-monitor.mjs`：起假 SSH server → 经插件自己的 API 注册主机 → 触发一轮 → 回读巡检/指标/告警/安全态势 | ✅ 通过 |
+| 端到端（变更/密钥） | `scripts/verify-routes.mjs`：假 SSH server → 发布两步 + 健康检查 → 读回历史 → 无回滚命令的计划被拒 → 日志检索 + 读回历史 → 设主密码 → **直接读 store 文件确认口令已非明文** → 轮换后重新认证仍成功 → 有密文时删密钥被拒 → 复原安全态势 | ✅ 13 项断言全过 |
+| 客户端产物 | `scripts/verify-client.mjs`：在 `node:vm` 里用桩页面加载真实 `lib/client.js`，断言注册 id、`inject` 只用运行时确实提供的服务、两个 Slot 都注册、两席 id 一致、8 个页签标签键都在产物里、`apply` 的 effect 可干净释放 | ✅ 7 项断言 |
+| 数据安全 | `scripts/audit-store.mjs`：列出每台主机的凭据形态（明文/密文/缺失），密文但无密钥时以非零退出码报「孤儿密文」；`scripts/verify-secret-liveness.mjs`：在运行中的插件上验证「无密钥→明文 / 有密钥→密文 / 密钥消失→回到明文」三个转换点 | ✅ 无孤儿密文；三个转换点全部符合预期 |

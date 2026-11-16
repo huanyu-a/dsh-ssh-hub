@@ -80,6 +80,9 @@ export function FleetTab({ api, active }: FleetTabProps) {
   const [seriesHost, setSeriesHost] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [secretDraft, setSecretDraft] = useState('')
+  const [secretBusy, setSecretBusy] = useState(false)
+  const [secretNotice, setSecretNotice] = useState<string | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -121,8 +124,69 @@ export function FleetTab({ api, active }: FleetTabProps) {
     }
   }
 
-  const loadSeries = async (alias: string): Promise<void> => {
-    setSeriesHost(alias)
+  /**
+   * Generate a candidate secret in the browser.
+   *
+   * The host can generate one too, but filling the field means the operator
+   * has a chance to copy it somewhere durable first — a generated key they
+   * never saw is a key they cannot restore from.
+   */
+  const generateSecretDraft = (): string => {
+    const bytes = new Uint8Array(32)
+    crypto.getRandomValues(bytes)
+    return [...bytes].map(byte => byte.toString(16).padStart(2, '0')).join('')
+  }
+
+  const applySecret = async (): Promise<void> => {
+    if (secretBusy) return
+    setSecretBusy(true)
+    setError(null)
+    setSecretNotice(null)
+    try {
+      const outcome = await api.setSecret({
+        action: 'set',
+        ...(secretDraft.trim() === '' ? {} : { secret: secretDraft.trim() }),
+      })
+      if (!outcome.ok) {
+        setError(outcome.error ?? tt('fleet.secretFailed'))
+      } else {
+        setSecretNotice(
+          tt('fleet.secretSaved')
+            .replace('{source}', outcome.source)
+            .replace('{rotated}', String(outcome.rotated)),
+        )
+        setSecretDraft('')
+      }
+      await refresh()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSecretBusy(false)
+    }
+  }
+
+  const clearSecret = async (): Promise<void> => {
+    if (secretBusy) return
+    setSecretBusy(true)
+    setError(null)
+    setSecretNotice(null)
+    try {
+      // confirmPlaintext is deliberately not sent: the host refuses to delete
+      // a key while anything still depends on it, and reports why. Passing the
+      // flag here would defeat that guard for the operator's most destructive
+      // click.
+      const outcome = await api.setSecret({ action: 'clear' })
+      if (!outcome.ok) setError(outcome.error ?? tt('fleet.secretFailed'))
+      else setSecretNotice(tt('fleet.secretCleared'))
+      await refresh()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    } finally {
+      setSecretBusy(false)
+    }
+  }
+
+  const loadSeries = async (alias: string): Promise<void> => {    setSeriesHost(alias)
     if (alias === '') { setSeries([]); return }
     try {
       setSeries(await api.metrics(alias, '1m', 'disk-usage', 60))
@@ -140,6 +204,7 @@ export function FleetTab({ api, active }: FleetTabProps) {
   return (
     <div className={css.fillBody}>
       {error !== null && <div className={css.banner} data-kind="error">{tt('common.error', { error })}</div>}
+      {secretNotice !== null && <div className={css.banner} data-kind="ok">{secretNotice}</div>}
 
       {/* Whether anything is watching comes first: a quiet alert list and an
           armed monitor look the same until you ask. */}
@@ -178,6 +243,74 @@ export function FleetTab({ api, active }: FleetTabProps) {
             )}
             {' · '}{tt('fleet.hostKey')} {security.hostKeyPolicy ?? '—'}
             {' · '}{tt('fleet.audit')} {security.auditEnabled === true ? tt('fleet.on') : tt('fleet.off')}
+          </div>
+        )}
+
+        {/* Secret management. A master key that can only be configured by
+            setting an environment variable and restarting DSH is a key most
+            operators never set, so the panel offers the file-based path here.
+            Rotation is stated as a consequence, not an option: changing the
+            key re-encrypts every stored credential, and if that does not
+            happen the credentials are lost. */}
+        {security !== null && (
+          <div className={css.secretCard}>
+            <div className={css.toolbar}>
+              <span className={css.fieldLabel}>{tt('fleet.secretTitle')}</span>
+              <span className={css.toolbarSpacer} />
+              <span className={css.cellMuted}>{tt('fleet.secretSource')} {security.secret.source}</span>
+            </div>
+            {(security.plaintextAliases ?? []).length > 0 && (
+              <div className={css.banner} data-kind="warn">
+                {tt('fleet.plaintextList')} {(security.plaintextAliases ?? []).join('、')}
+              </div>
+            )}
+            {security.keyPath !== undefined && (
+              <p className={css.hint}>{tt('fleet.keyPath')} <code className={css.mono}>{security.keyPath}</code></p>
+            )}
+            <p className={css.hint}>{tt('fleet.secretHint')}</p>
+            <div className={css.inlineRow}>
+              <label className={css.field}>
+                <span className={css.fieldLabel}>{tt('fleet.secretInput')}</span>
+                <input
+                  className={css.input}
+                  type="password"
+                  value={secretDraft}
+                  autoComplete="new-password"
+                  placeholder={tt('fleet.secretPlaceholder')}
+                  onChange={event => { setSecretDraft(event.target.value) }}
+                />
+              </label>
+              <button
+                type="button"
+                className={css.primaryButton}
+                disabled={secretBusy}
+                onClick={() => { void applySecret() }}
+              >
+                {secretBusy ? tt('fleet.secretWorking') : tt('fleet.secretApply')}
+              </button>
+              <button
+                type="button"
+                className={css.linkButton}
+                disabled={secretBusy}
+                onClick={() => { setSecretDraft(generateSecretDraft()) }}
+              >
+                {tt('fleet.secretGenerate')}
+              </button>
+            </div>
+            {security.secret.source === 'file' && (
+              <button
+                type="button"
+                className={css.linkButton}
+                data-danger=""
+                disabled={secretBusy}
+                onClick={() => { void clearSecret() }}
+              >
+                {tt('fleet.secretClear')}
+              </button>
+            )}
+            {security.encryptConfigured && !security.secret.available && (
+              <div className={css.banner} data-kind="error">{tt('fleet.switchWithoutKey')}</div>
+            )}
           </div>
         )}
       </div>

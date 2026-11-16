@@ -3,6 +3,10 @@
   "compilerOptions": {
     "noEmit": false,
     "composite": true,
+    // Inside `lib` on purpose: `build:host` wipes `lib`, so the incremental
+    // record is removed with the outputs it describes. Keeping it elsewhere
+    // lets tsc believe `.d.ts` files still exist and silently skip emitting
+    // them, producing a package whose `types` entries point at nothing.
     "tsBuildInfoFile": "lib/tsconfig.build.tsbuildinfo",
     "declaration": true,
     "emitDeclarationOnly": true,

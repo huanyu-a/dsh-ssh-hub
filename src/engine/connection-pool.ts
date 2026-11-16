@@ -143,6 +143,14 @@ export function buildConnectConfig(entry: SshHostEntry, sock: ConnectConfig['soc
     })
   }
   if (entry.auth.kind === 'password') {
+    // A password host with no password cannot authenticate. Saying so beats
+    // letting ssh2 report "no authentication methods", which sends the
+    // operator looking at the server instead of at the credential store.
+    if (entry.auth.password === undefined || entry.auth.password === '') {
+      throw new Error(
+        `no password stored for '${entry.alias}': the credential is missing, or it is encrypted and the master key is not available`,
+      )
+    }
     config.password = entry.auth.password
   } else if (entry.auth.kind === 'agent') {
     const agentPath = resolveAgentPath(entry.auth.agentPath)

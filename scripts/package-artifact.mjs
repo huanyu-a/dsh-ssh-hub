@@ -26,18 +26,37 @@ function sha256(buffer) {
   return createHash('sha256').update(buffer).digest('hex')
 }
 
-/** The files the package ships, as declared by package.json "files". */
+/**
+ * The files the package ships, as declared by package.json "files".
+ *
+ * Each pattern is turned into a directory prefix plus the literal text that
+ * follows its last `*`, which is the suffix every match must end with
+ * (`lib/**\/*.d.ts` -> prefix `lib`, suffix `.d.ts`). Matching on the prefix
+ * alone would claim every file under `lib` — build caches like
+ * `*.tsbuildinfo` included — and report a mismatch npm does not actually
+ * produce.
+ */
 function shippedFiles() {
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   const patterns = manifest.files ?? []
-  const roots = patterns.map(pattern => pattern.replace(/\/\*\*?.*$/, ''))
+  const matchers = patterns.map(pattern => {
+    const star = pattern.lastIndexOf('*')
+    if (star === -1) return { prefix: pattern.replace(/\/$/, ''), suffix: undefined }
+    return {
+      prefix: pattern.slice(0, pattern.indexOf('*')).replace(/\/$/, ''),
+      suffix: pattern.slice(star + 1),
+    }
+  })
   const found = []
   const walk = (dir) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === 'node_modules' || entry.name === '.git') continue
       const full = join(dir, entry.name)
       const rel = relative(root, full).replaceAll('\\', '/')
-      const underAPattern = roots.some(pattern => rel === pattern || rel.startsWith(`${pattern}/`))
+      const underAPattern = matchers.some(({ prefix, suffix }) =>
+        (rel === prefix || rel.startsWith(`${prefix}/`))
+        && (suffix === undefined || suffix === '' || rel.endsWith(suffix)),
+      )
       if (!underAPattern) continue
       if (entry.isFile()) found.push(rel)
       else if (entry.isDirectory()) walk(full)
@@ -98,7 +117,37 @@ if (missing.length > 0 || mismatched.length > 0) {
   process.exit(1)
 }
 
-// 3. The tarball must carry the built bundles, and they must not be stubs.
+// 3. Every path `exports` advertises must exist in the tarball.
+//
+// This catches a build that silently skipped emitting declarations: with
+// `composite`, tsc trusts its .tsbuildinfo and can decide `.d.ts` outputs are
+// current even after they were deleted, so the package would install fine and
+// then fail type resolution for anyone consuming its `types` entries.
+const declared = []
+const pkgManifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+for (const target of Object.values(pkgManifest.exports ?? {})) {
+  if (typeof target === 'string') declared.push(target)
+  else if (target !== null && typeof target === 'object') {
+    for (const value of Object.values(target)) {
+      if (typeof value === 'string' && value.startsWith('./')) declared.push(value)
+    }
+  }
+}
+if (typeof pkgManifest.main === 'string') declared.push(pkgManifest.main)
+if (typeof pkgManifest.types === 'string') declared.push(pkgManifest.types)
+
+const absent = [...new Set(declared)]
+  .map(entry => entry.replace(/^\.\//, ''))
+  .filter(rel => rel !== '' && !rel.includes('*') && !packed.has(rel))
+
+if (absent.length > 0) {
+  console.error('packaging check FAILED: manifest points at files the tarball does not have')
+  for (const rel of absent) console.error(`  missing: ${rel}`)
+  console.error('  (a build step was skipped — run the full build, not just one half)')
+  process.exit(1)
+}
+
+// 4. The tarball must carry the built bundles, and they must not be stubs.
 for (const required of ['lib/index.js', 'lib/client.js']) {
   const data = packed.get(required)
   if (data === undefined) {

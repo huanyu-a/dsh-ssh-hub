@@ -7,6 +7,12 @@ import {
   SSH_API,
   type AlertEventRow,
   type AlertStateRow,
+  type DeployPlanPayload,
+  type DeployRunRow,
+  type LogSearchPayload,
+  type LogSearchRow,
+  type MasterSecretPayload,
+  type MasterSecretResult,
   type ClusterResult,
   type ExecResult,
   type HostChange,
@@ -362,6 +368,58 @@ export class SshApi {
   async security(): Promise<SecurityStatus> {
     const response = await fetch(SSH_API.security)
     return await readJson<SecurityStatus>(response)
+  }
+
+  /**
+   * Store or clear the master secret.
+   *
+   * The host decides whether a rotation is needed and refuses a change that
+   * would strand encrypted credentials, so the caller must surface `error`
+   * rather than assume success from a 200.
+   */
+  async setSecret(payload: MasterSecretPayload): Promise<MasterSecretResult> {
+    const response = await fetch(SSH_API.setSecret, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return await readJson<MasterSecretResult>(response)
+  }
+
+  /** Recorded deployment runs, newest first. */
+  async deployHistory(limit = 20): Promise<DeployRunRow[]> {
+    const response = await fetch(SSH_API.deployHistory + query({ limit }))
+    const body = await readJson<{ runs: DeployRunRow[] }>(response)
+    return body.runs
+  }
+
+  /** Run a deployment plan and receive the recorded run. */
+  async deploy(plan: DeployPlanPayload, targets?: string[]): Promise<DeployRunRow> {
+    const response = await fetch(SSH_API.deploy, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ plan, targets }),
+    })
+    const body = await readJson<{ run: DeployRunRow }>(response)
+    return body.run
+  }
+
+  /** Recent cross-host log searches, newest first. */
+  async logHistory(limit = 20): Promise<LogSearchRow[]> {
+    const response = await fetch(SSH_API.logsHistory + query({ limit }))
+    const body = await readJson<{ searches: LogSearchRow[] }>(response)
+    return body.searches
+  }
+
+  /** Run a cross-host log search. */
+  async searchLogs(request: LogSearchPayload, targets?: string[]): Promise<LogSearchRow> {
+    const response = await fetch(SSH_API.logs, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ request, targets }),
+    })
+    const body = await readJson<{ search: LogSearchRow }>(response)
+    return body.search
   }
 
   // ----------------------------------------------------------------- ls

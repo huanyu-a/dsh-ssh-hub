@@ -315,6 +315,109 @@ export interface SecurityStatus {
   secret: { available: boolean; source: 'env' | 'file' | 'none' }
   hostKeyPolicy?: string
   auditEnabled?: boolean
+  /** Entries whose stored credentials are still readable without the key. */
+  plaintextAliases?: string[]
+  /** The key file the panel manages (shown so the operator can back it up). */
+  keyPath?: string
+}
+
+/** One deployment step as the panel submits it. */
+export interface DeployStepPayload {
+  name: string
+  command: string
+  /** Undo command. Required: a step without one cannot be rolled back. */
+  rollbackCommand: string
+}
+
+/** A deployment plan as the panel submits it. */
+export interface DeployPlanPayload {
+  id: string
+  description?: string
+  steps: DeployStepPayload[]
+  batchSize?: number
+  timeoutMs?: number
+  stopOnFailure?: boolean
+  healthCheck?: { command: string; expectExitCode?: number; settleMs?: number }
+}
+
+/** A log-search request as the panel submits it. */
+export interface LogSearchPayload {
+  pattern: string
+  source?: 'journal' | 'files'
+  directory?: string
+  unit?: string
+  sinceSeconds?: number
+  maxLinesPerHost?: number
+}
+
+/** One host's outcome inside a recorded deployment. */
+export interface DeployHostRow {
+  alias: string
+  ok: boolean
+  /** Names of the steps that ran, in order (the orchestrator does not report them). */
+  steps: string[]
+  /** Health-check verdict, when the plan declared one. */
+  healthy?: boolean
+  /** Whether a rollback was attempted for this host. */
+  rolledBack?: boolean
+  /** The exit code of the last step. */
+  exitCode?: number | null
+  error?: string
+}
+
+/** One recorded deployment run, as the deploy tab reads it. */
+export interface DeployRunRow {
+  id: string
+  planId: string
+  at: number
+  finishedAt?: number
+  /** The plan's batch size, so the UI can group hosts the way they ran. */
+  batchSize: number
+  hostCount: number
+  ok: boolean
+  hosts: DeployHostRow[]
+}
+
+/** One host's slice of a cross-host log search. */
+export interface LogHostRow {
+  alias: string
+  ok: boolean
+  lines: string[]
+  total: number
+  truncated: boolean
+  error?: string
+  durationMs?: number
+}
+
+/** One cross-host log search result, as the logs tab reads it. */
+export interface LogSearchRow {
+  at: number
+  pattern: string
+  source: string
+  /** 'all' or the selected aliases. */
+  targets: string[]
+  hosts: LogHostRow[]
+}
+
+/** Set or clear the master secret from the panel (interactive setup). */
+export interface MasterSecretPayload {
+  /** New master secret. An empty string clears nothing; use action 'clear'. */
+  secret?: string
+  /** 'set' stores/rotates the secret, 'clear' removes it. */
+  action: 'set' | 'clear'
+  /** For 'clear': re-encrypt existing plaintext first (refused when false). */
+  confirmPlaintext?: boolean
+}
+
+/** Outcome of a master-secret change. */
+export interface MasterSecretResult {
+  ok: boolean
+  /** Where the secret now comes from. */
+  source: 'env' | 'file' | 'none'
+  /** Entries re-encrypted by this call. */
+  rotated: number
+  /** Set when the change was refused or failed. */
+  error?: string
 }
 
 /** Route paths the client calls (shared literals). */
@@ -345,6 +448,16 @@ export const SSH_API = {
   metrics: SSH_API_BASE + '/metrics',
   /** The live security posture. */
   security: SSH_API_BASE + '/security',
+  /** Recorded deployment runs, newest first. */
+  deployHistory: SSH_API_BASE + '/deploy/history',
+  /** Run a deployment plan recorded into the history. */
+  deploy: SSH_API_BASE + '/deploy',
+  /** Cross-host log search, recorded into the history. */
+  logs: SSH_API_BASE + '/logs',
+  /** Recent log-search results, newest first. */
+  logsHistory: SSH_API_BASE + '/logs/history',
+  /** Store or clear the master secret from the panel. */
+  setSecret: SSH_API_BASE + '/security/secret',
 } as const
 
 /** NDJSON transfer stream line shapes (upload). */

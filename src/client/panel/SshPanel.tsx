@@ -8,13 +8,16 @@
  * the ids the terminal tab needs to reattach its host-side sessions. Inactive
  * tabs unmount, so each tab fetches its own data on activation.
  */
-import { useCallback, useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore, type ReactNode } from 'react'
 import type { SshApi } from '../api.ts'
 import type { PanelController, SshTab } from './controller.ts'
 import { tt, type TerminalFontSource } from './helpers.ts'
+import { SSH_TABS } from './tabs.ts'
 import { ClusterTab } from './ClusterTab.tsx'
+import { DeployTab } from './DeployTab.tsx'
 import { FleetTab } from './FleetTab.tsx'
 import { HostsTab } from './HostsTab.tsx'
+import { LogsTab } from './LogsTab.tsx'
 import { TerminalTab } from './TerminalTab.tsx'
 import { TransferTab } from './TransferTab.tsx'
 import { TunnelsTab } from './TunnelsTab.tsx'
@@ -31,14 +34,38 @@ export interface SshPanelProps {
 }
 
 /** The tab bar definition (labels resolved at render time). */
-const TABS: ReadonlyArray<{ id: SshTab; label: () => string }> = [
-  { id: 'hosts', label: () => tt('tab.hosts') },
-  { id: 'terminal', label: () => tt('tab.terminal') },
-  { id: 'transfer', label: () => tt('tab.transfer') },
-  { id: 'tunnels', label: () => tt('tab.tunnels') },
-  { id: 'cluster', label: () => tt('tab.cluster') },
-  { id: 'fleet', label: () => tt('tab.fleet') },
-]
+const TABS = SSH_TABS
+
+/**
+ * Render the active tab.
+ *
+ * A `Record<SshTab, ...>` rather than a chain of `&&` comparisons: the record
+ * type requires an entry for every member of the union, so a new tab that is
+ * added to `SshTab` and to the tab bar but forgotten here is a compile error.
+ * With `&&` comparisons the same omission renders an empty panel — the failure
+ * mode where the tab is selectable and shows nothing.
+ */
+function renderActiveTab(
+  activeTab: SshTab,
+  { api, controller, terminalFont, panelOpen }: {
+    api: SshApi
+    controller: PanelController
+    terminalFont?: TerminalFontSource
+    panelOpen: boolean
+  },
+): ReactNode {
+  const renderers: Record<SshTab, () => ReactNode> = {
+    hosts: () => <HostsTab api={api} onConnect={alias => { controller.requestConnect(alias) }} />,
+    terminal: () => <TerminalTab api={api} controller={controller} terminalFont={terminalFont} />,
+    transfer: () => <TransferTab api={api} />,
+    tunnels: () => <TunnelsTab api={api} active={panelOpen} />,
+    cluster: () => <ClusterTab api={api} />,
+    deploy: () => <DeployTab api={api} active={panelOpen} />,
+    logs: () => <LogsTab api={api} active={panelOpen} />,
+    fleet: () => <FleetTab api={api} active={panelOpen} />,
+  }
+  return renderers[activeTab]()
+}
 
 /** The tabbed SSH panel. */
 export function SshPanel({ controller, api, terminalFont }: SshPanelProps) {
@@ -66,19 +93,12 @@ export function SshPanel({ controller, api, terminalFont }: SshPanelProps) {
       <div className={css.tabBar} role="tablist" data-dsh-part="tab-bar">
         {TABS.map(tab => (
           <button key={tab.id} type="button" role="tab" aria-selected={activeTab === tab.id} data-active={activeTab === tab.id ? '' : undefined} data-dsh-part="tab" className={css.tab} onClick={() => { controller.setActiveTab(tab.id) }}>
-            {tab.label()}
+            {tt(tab.labelKey)}
           </button>
         ))}
       </div>
       <div className={css.panelContent}>
-        {activeTab === 'hosts' && <HostsTab api={api} onConnect={alias => { controller.requestConnect(alias) }} />}
-        {activeTab === 'terminal' && (
-          <TerminalTab api={api} controller={controller} terminalFont={terminalFont} />
-        )}
-        {activeTab === 'transfer' && <TransferTab api={api} />}
-        {activeTab === 'tunnels' && <TunnelsTab api={api} active={panelOpen} />}
-        {activeTab === 'cluster' && <ClusterTab api={api} />}
-        {activeTab === 'fleet' && <FleetTab api={api} active={panelOpen} />}
+        {renderActiveTab(activeTab, { api, controller, terminalFont, panelOpen })}
       </div>
     </div>
   )

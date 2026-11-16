@@ -26,14 +26,31 @@ import { hubInspectCatalogTool, hubInspectDiffTool, hubInspectTool, hubMonitorTo
 import { AlertEngine } from './alerting/rules.ts'
 import { hubAlertRulesTool, hubAlertsTool, hubAlertTestTool, defaultRules, type AlertEvent } from './alerting/tools.ts'
 import { notifyAll, type NotifyChannel } from './alerting/notify.ts'
+import { renderAlertSummary } from './alerting/prompt-summary.ts'
 import { hubDeployTool } from './deploy/tools.ts'
 import { hubLogSearchTool } from './logs/tools.ts'
 import { Monitor } from './monitor/loop.ts'
 import { MetricStore, samplesFromRound } from './monitor/metrics.ts'
+import type { DeployRunRow, LogSearchRow } from './protocol.ts'
 import { mountOnce } from './mount-once.ts'
 import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
 import { defaultKnownHostsPath } from './security/known-hosts.ts'
 import { isSealed, open, seal } from './security/secrets.ts'
+import {
+  SECRET_ENV,
+  SECRET_FILE_ENV,
+  defaultKeyPath,
+  findPlaintextEntries,
+  generateSecret,
+  masterSecretSource,
+  readMasterSecret,
+  removeMasterKey,
+  rotateSecrets,
+  writeMasterKey,
+} from './security/master-secret.ts'
+import { ActivityHistory } from './activity/history.ts'
+import { dshHome } from './dsh-home.ts'
+import { join } from 'node:path'
 import { AuditLog } from './audit/audit-log.ts'
 import { AuditRecorder } from './audit/recorder.ts'
 
@@ -196,26 +213,16 @@ function parseCheckList(raw: string): string[] | undefined {
  * cannot be read at mount time cannot protect a store that is opened at
  * mount time.
  *
+ * A third source exists now: the key file the panel writes, at
+ * `<dsh home>/dsh-ssh-master.key`. It is consulted only when neither
+ * environment variable names a secret, so an explicit environment
+ * configuration always wins over a file the plugin created.
+ *
+ * @param keyPath - the key file the panel manages.
  * @returns the master secret, or undefined when none is configured.
  */
-function readMasterSecret(): string | undefined {
-  const fromEnv = process.env.DSH_SSH_HUB_SECRET
-  if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv
-
-  const filePath = process.env.DSH_SSH_HUB_SECRET_FILE
-  if (filePath === undefined || filePath.trim() === '') return undefined
-  try {
-    const fromFile = readFileSync(filePath.trim(), 'utf8')
-    // A trailing newline is normal in a secret file written by an editor or
-    // by `echo`; keeping it would derive a different key from the same text.
-    const trimmed = fromFile.replace(/\r?\n$/, '')
-    return trimmed !== '' ? trimmed : undefined
-  } catch {
-    // A configured-but-unreadable file is not worth guessing about: fall
-    // through to plaintext (the operator's store was already plaintext or
-    // unopenable) rather than throwing and taking the whole plugin down.
-    return undefined
-  }
+function resolveMasterSecret(keyPath: string): string | undefined {
+  return readMasterSecret(keyPath)
 }
 
 /**
@@ -225,16 +232,12 @@ function readMasterSecret(): string | undefined {
  * and *why not* — "encryptCredentials is on but nothing is encrypted" is
  * the single most confusing state this plugin can present.
  *
+ * @param keyPath - the key file the panel manages.
  * @returns the source label and whether a secret is available.
  */
-function masterSecretStatus(): { available: boolean; source: 'env' | 'file' | 'none' } {
-  const fromEnv = process.env.DSH_SSH_HUB_SECRET
-  if (fromEnv !== undefined && fromEnv.trim() !== '') return { available: true, source: 'env' }
-  const filePath = process.env.DSH_SSH_HUB_SECRET_FILE
-  if (filePath !== undefined && filePath.trim() !== '' && readMasterSecret() !== undefined) {
-    return { available: true, source: 'file' }
-  }
-  return { available: false, source: 'none' }
+function masterSecretStatus(keyPath: string): { available: boolean; source: 'env' | 'file' | 'none' } {
+  const source = masterSecretSource(keyPath)
+  return { available: source !== 'none', source }
 }
 
 /**
@@ -323,18 +326,59 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   // to plaintext would defeat the point of encrypting at all. With no
   // secret configured the store keeps the base plugin's plaintext
   // behaviour, so enabling encryption is a deliberate act.
-  const masterSecret = readMasterSecret()
+  // The key file the panel writes. Resolved once at mount: the panel's
+  // secret route reports the file it would write, so the two must name the
+  // same path.
+  const keyPath = defaultKeyPath(dshHome())
   const encryptCredentials = readConfigField(config?.encryptCredentials, false)
-  // Encryption needs BOTH the operator's consent and a key. Consent without a
-  // key cannot encrypt; a key without consent must not encrypt, or an operator
-  // who never opted in would find their store rewritten in a format they did
-  // not choose.
-  const protector: SecretProtector | undefined = (encryptCredentials && masterSecret !== undefined)
-    ? {
-        seal: plaintext => seal(plaintext, masterSecret),
-        open: stored => (isSealed(stored) ? open(stored, masterSecret) : undefined),
-      }
-    : undefined
+
+  /**
+   * Is encryption active right now?
+   *
+   * Two ways to consent, because there are two ways to configure a key:
+   * - `encryptCredentials` plus an environment/file secret, the original path;
+   * - a key the operator set through the panel, which is itself the consent.
+   *
+   * The second matters: without it, setting a key in the panel would write a
+   * file and change nothing, leaving the operator staring at "encryption
+   * configured, nothing encrypted" — the exact state this feature exists to
+   * end. A stray environment variable still cannot rewrite the store, because
+   * it needs the explicit config flag.
+   *
+   * @returns whether credentials should be sealed.
+   */
+  const encryptionActive = (): boolean => {
+    const source = masterSecretSource(keyPath)
+    if (source === 'none') return false
+    // A key file this plugin manages is the panel's own consent.
+    const panelKey = source === 'file'
+      && (process.env[SECRET_FILE_ENV] === undefined || process.env[SECRET_FILE_ENV] === '')
+    return encryptCredentials || panelKey
+  }
+
+  /**
+   * A protector that reads the live secret on every operation.
+   *
+   * The secret is resolved per call rather than captured at mount, so setting
+   * or rotating it from the panel takes effect on the next store write without
+   * a restart. A protector captured once would keep sealing with the old key
+   * after a rotation and lock the operator out of their own credentials.
+   */
+  const protector: SecretProtector = {
+    seal: (plaintext) => {
+      const secret = resolveMasterSecret(keyPath)
+      if (secret === undefined || !encryptionActive()) return plaintext
+      return seal(plaintext, secret)
+    },
+    open: (stored) => {
+      if (!isSealed(stored)) return undefined
+      const secret = resolveMasterSecret(keyPath)
+      // A sealed value with no key is unreadable, and saying so is better than
+      // returning the envelope as if it were the password.
+      if (secret === undefined) return undefined
+      return open(stored, secret)
+    },
+  }
 
   const store = new HostStore(undefined, undefined, protector)
   const engine = new SshEngine(store, {
@@ -360,6 +404,13 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
 
   // The metric store: tiered history behind the inspection rounds.
   const metricStore = new MetricStore()
+
+  // Operator-action history: deployment runs and cross-host log searches.
+  // Both outlive the panel session that produced them, which is the point —
+  // "what did that rollout do" is asked after the fact.
+  const hubHome = join(dshHome(), 'dsh-ssh-hub')
+  const deployHistory = new ActivityHistory<DeployRunRow>(hubHome, 'deploys')
+  const logHistory = new ActivityHistory<LogSearchRow>(hubHome, 'logs')
 
   // The monitoring loop: inspection on a timer, feeding the alert rules.
   // It is created unconditionally but only armed when the config asks for
@@ -420,14 +471,99 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
     alerts: alertEngine,
     alertEvents,
     security: () => ({
-      // The two conditions that must both hold for credentials to be
-      // encrypted. Reporting them separately is the point: "switch on, no
-      // secret" and "secret present, switch off" need different fixes.
-      encryptConfigured: readConfigField(config?.encryptCredentials, false),
-      secret: masterSecretStatus(),
+      // The effective state, not just the config switch. A panel key makes
+      // encryption active on its own, and reporting the switch alone would
+      // show "encryption off" while the store is in fact encrypted — the
+      // single most confusing state this plugin can present.
+      encryptConfigured: encryptionActive(),
+      secret: masterSecretStatus(keyPath),
       hostKeyPolicy: readConfigField(config?.hostKeyPolicy, 'off'),
       auditEnabled: readConfigField(config?.auditEnabled, true),
     }),
+    // The panel's secret management: status of the plaintext side, plus the
+    // two mutating operations. Each is a callback so the route always reads
+    // the live store rather than a snapshot taken at mount.
+    keyPath,
+    plaintext: () => findPlaintextEntries(store.path),
+    deployHistory,
+    logHistory,
+    setSecret: (payload) => {
+      if (payload.action === 'clear') {
+        // Deleting the key while anything is sealed would leave every stored
+        // credential unreadable. Refuse unless the operator explicitly accepts
+        // that, which is what confirmPlaintext carries.
+        const stillPlaintext = findPlaintextEntries(store.path).aliases
+        if (stillPlaintext.length === 0 && payload.confirmPlaintext !== true) {
+          return {
+            ok: false,
+            source: masterSecretSource(keyPath),
+            rotated: 0,
+            error: 'clearing the key would make every encrypted credential unreadable; decrypt or re-enter them first, then pass confirmPlaintext',
+          }
+        }
+        const removed = removeMasterKey(keyPath)
+        return {
+          ok: removed.ok,
+          source: masterSecretSource(keyPath),
+          rotated: 0,
+          ...(removed.error === undefined ? {} : { error: removed.error }),
+        }
+      }
+      const next = typeof payload.secret === 'string' && payload.secret.length > 0
+        ? payload.secret
+        : generateSecret()
+      const current = resolveMasterSecret(keyPath)
+      const hadKey = masterSecretSource(keyPath) === 'file'
+      const wasActive = encryptionActive()
+      // Plaintext entries must be sealed by this call, otherwise setting a key
+      // changes nothing on disk and the panel keeps reporting plaintext
+      // credentials — the confusing state this whole feature exists to end.
+      const plaintextBefore = findPlaintextEntries(store.path).aliases
+
+      // Case 1: rotating an existing key. Verify + reseal under the new secret
+      // with the new key committed mid-way, so a failure leaves the file
+      // readable with the key that is on disk.
+      if (current !== undefined && current !== next && wasActive) {
+        const rotated = rotateSecrets(store, current, next, secret => writeMasterKey(keyPath, secret, true))
+        return {
+          ok: rotated.ok,
+          source: masterSecretSource(keyPath),
+          rotated: rotated.rotated,
+          ...(rotated.error === undefined ? {} : { error: rotated.error }),
+        }
+      }
+
+      // Case 2: first key, or rotating a key that was not active. Write the key
+      // first; the live protector reads it on the next operation.
+      const written = writeMasterKey(keyPath, next, hadKey)
+      if (!written.ok) {
+        return {
+          ok: false,
+          source: masterSecretSource(keyPath),
+          rotated: 0,
+          error: written.error ?? 'the key file could not be written',
+        }
+      }
+      // Re-seal whatever is still plaintext, under the key that is now on disk.
+      let rotated = 0
+      if (plaintextBefore.length > 0) {
+        try {
+          const entries = store.list()
+          store.resealAll(entries)
+          rotated = entries.length
+        } catch (error) {
+          // The key exists but sealing failed: report it rather than claiming
+          // success, and leave the plaintext store intact (it is still usable).
+          return {
+            ok: false,
+            source: masterSecretSource(keyPath),
+            rotated: 0,
+            error: `the key was stored but existing credentials could not be re-encrypted: ${error instanceof Error ? error.message : String(error)}`,
+          }
+        }
+      }
+      return { ok: true, source: masterSecretSource(keyPath), rotated }
+    },
   })
   let disposeRoutes: (() => void) | undefined
   let disposeMonitor: (() => void) | undefined
@@ -486,6 +622,7 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
     }
     if (!value.enabled) return
     if (value.announceToAgent) {
+      const guidance = visibleToolText(ctx.tools, SSH_TOOL_NAMES, SSH_GUIDANCE)
       disposeSection = ctx.systemPrompt.section({
         name: 'plugin:dsh-ssh',
         order: SECTION_ORDER,
@@ -493,7 +630,21 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
         // least one of them is reachable: a restriction that removes the tool
         // surface must take the guidance with it, instead of telling the model
         // to call tools this session cannot see.
-        text: visibleToolText(ctx.tools, SSH_TOOL_NAMES, SSH_GUIDANCE),
+        //
+        // The live alert summary is appended to the same section rather than
+        // registered as a second one: it is the same subject, and a separate
+        // section would need its own ordering decision and its own visibility
+        // gate for no benefit.
+        text: (context) => {
+          const base = guidance(context)
+          if (base === '') return ''
+          // A quiet fleet adds nothing. An empty list is only meaningful when
+          // something is actually watching, which `renderAlertSummary` states
+          // explicitly rather than leaving the model to infer health from
+          // silence.
+          const summary = renderAlertSummary(alertEngine, monitor)
+          return summary === '' ? base : `${base}\n\n${summary}`
+        },
       })
     }
     disposeRoutes = ctx.effect(

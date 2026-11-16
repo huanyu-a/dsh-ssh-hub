@@ -53,8 +53,16 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
-/** Required services (fiber inject waiting — the runtime must be up first). */
-export const inject = ['slots', 'locale', 'configForms', 'layout']
+/**
+ * Required services (fiber inject waiting — the runtime must be up first).
+ *
+ * Only services this half truly cannot work without are listed. `configForms`
+ * is intentionally absent: it is optional (one terminal-font preference), and
+ * declaring it here makes the client fiber wait forever on a family that does
+ * not provide it, so `apply` never runs and the panel silently never appears.
+ * Optional services are read through `ctx.get` and degrade instead.
+ */
+export const inject = ['slots', 'locale', 'layout']
 
 /** Type-only surface (export discipline: no value exports beyond the plugin contract). */
 export type { PanelControllerSnapshot } from './panel/controller.ts'

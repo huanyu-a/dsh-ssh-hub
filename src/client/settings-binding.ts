@@ -145,6 +145,16 @@ class SharedFormsReader<T> implements SettingsReader<T> {
 
 /**
  * Bind this plugin's settings reader.
+ *
+ * `configForms` is deliberately read with `ctx.get` rather than declared in
+ * the client `inject` list. Declaring an optional service as a dependency
+ * makes the whole client fiber wait for it forever when the family does not
+ * ship it, and the panel then never mounts at all — a missing settings
+ * service would cost the entire panel, which is far too high a price for one
+ * terminal-font preference. Both paths below are optional by design: with
+ * neither present the reader reports `undefined`, and the panel uses its CSS
+ * font chain.
+ *
  * @param ctx - client context carrying the family binder and/or the shared forms service.
  * @param namespace - the family settings namespace this plugin owns.
  * @param field - the field this plugin's own schema declares, used to recognise its entry when the family binder is absent.
@@ -160,5 +170,15 @@ export function bindSettingsReader<T>(ctx: ClientContext, namespace: string, fie
       dispose: () => {},
     }
   }
-  return new SharedFormsReader<T>(ctx.configForms, field)
+  const forms = ctx.get('configForms')
+  // No forms surface at all: report "nothing to read" rather than throwing or
+  // waiting. The preference is cosmetic; its absence must not gate the panel.
+  if (forms === undefined) {
+    return {
+      getSnapshot: () => PENDING_SNAPSHOT as ConfigFormSnapshot<T>,
+      subscribe: () => () => {},
+      dispose: () => {},
+    }
+  }
+  return new SharedFormsReader<T>(forms, field)
 }
