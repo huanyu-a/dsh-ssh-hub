@@ -115,7 +115,7 @@ export const Config = z.object({
   knownHostsPath: z.string().default('').volatile()
     .description('Path to the known_hosts file used for host-key verification. Empty uses ~/.ssh/known_hosts.'),
   encryptCredentials: z.boolean().default(false).volatile()
-    .description('Encrypt stored passwords and key passphrases. Needs DSH_SSH_HUB_SECRET (or a DSH credential) as the master secret. With no master secret the secrets stay in plaintext, exactly as before.'),
+    .description('Encrypt stored passwords and key passphrases. Needs DSH_SSH_HUB_SECRET in the environment as the master secret; there is deliberately no default, because a default master secret is a backdoor. With no master secret the secrets stay in plaintext, exactly as before.'),
   auditEnabled: z.boolean().default(true).volatile()
     .description('Record every operation (exec, cluster, transfer, deploy, credential change) in an append-only audit log under $DSH_HOME/dsh-ssh-hub/audit.log. Secrets are redacted before a record is written.'),
 })
@@ -137,24 +137,20 @@ function readConfigField<T>(field: ConfigField<T> | undefined, fallback: T): T {
 /**
  * The master secret used to encrypt stored credentials.
  *
- * The environment variable wins because it is the only source that works
- * unattended (a headless profile with no one to type a passphrase). The
- * DSH credentials service is the fallback; if neither is present there is
- * NO master secret, and the store keeps plaintext — which is exactly what
- * the operator chose by not configuring one.
+ * The environment variable is the only supported source. It is also the
+ * only one that works unattended — a headless profile with no one to type
+ * a passphrase. The DSH credentials service was the intended fallback,
+ * but it is an async service and this plugin's apply is synchronous, and
+ * reading an undeclared service off the context throws at mount time.
+ * So: environment variable, and nothing else. With no secret configured
+ * the store keeps plaintext, which is exactly what the operator chose by
+ * not configuring one.
  *
- * @param ctx - the plugin context.
  * @returns the master secret, or undefined when none is configured.
  */
-function readMasterSecret(ctx: Context): string | undefined {
+function readMasterSecret(): string | undefined {
   const fromEnv = process.env.DSH_SSH_HUB_SECRET
   if (fromEnv !== undefined && fromEnv.trim() !== '') return fromEnv
-  const credentials = (ctx as Context & { credentials?: { resolve?: (id: string) => Promise<string | undefined> } }).credentials
-  if (credentials?.resolve === undefined) return undefined
-  // The credentials service is asynchronous; the plugin's apply is not.
-  // A configured credential therefore cannot be read at mount time, so the
-  // environment variable is the supported path. The credentials hook is
-  // left for a future async-aware surface rather than pretending to work.
   return undefined
 }
 
@@ -243,7 +239,7 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   // to plaintext would defeat the point of encrypting at all. With no
   // secret configured the store keeps the base plugin's plaintext
   // behaviour, so enabling encryption is a deliberate act.
-  const masterSecret = readMasterSecret(ctx)
+  const masterSecret = readMasterSecret()
   const encryptCredentials = readConfigField(config?.encryptCredentials, false)
   // Encryption needs BOTH the operator's consent and a key. Consent without a
   // key cannot encrypt; a key without consent must not encrypt, or an operator
