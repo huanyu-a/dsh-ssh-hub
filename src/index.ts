@@ -20,10 +20,17 @@ import { HostStore, type SecretProtector } from './store.ts'
 import { sshClusterTool, sshDownloadTool, sshExecTool, sshListTool, sshTunnelTool, sshUploadTool } from './tools.ts'
 import { Inspector } from './inspect/inspection.ts'
 import { hubInspectCatalogTool, hubInspectDiffTool, hubInspectTool } from './inspect/tools.ts'
+import { AlertEngine } from './alerting/rules.ts'
+import { hubAlertRulesTool, hubAlertsTool, hubAlertTestTool, defaultRules, type AlertEvent } from './alerting/tools.ts'
+import type { NotifyChannel } from './alerting/notify.ts'
+import { hubDeployTool } from './deploy/tools.ts'
+import { hubLogSearchTool } from './logs/tools.ts'
 import { mountOnce } from './mount-once.ts'
 import { PLUGIN_TOOL_SECTION_ORDERS, visibleToolText } from './tool-surface.ts'
 import { defaultKnownHostsPath } from './security/known-hosts.ts'
 import { isSealed, open, seal } from './security/secrets.ts'
+import { AuditLog } from './audit/audit-log.ts'
+import { AuditRecorder } from './audit/recorder.ts'
 
 /** Stable cordis plugin name. */
 export const name = 'ssh'
@@ -182,18 +189,53 @@ function profileConfig(ctx: Context): Record<string, unknown> | undefined {
 /** Order of the announcement section within the shared tool-guidance band. */
 const SECTION_ORDER = PLUGIN_TOOL_SECTION_ORDERS.ssh
 
-/** The six agent-tool names this plugin's announcement describes. */
-const SSH_TOOL_NAMES = ['ssh_list', 'ssh_exec', 'ssh_upload', 'ssh_download', 'ssh_tunnel', 'ssh_cluster'] as const
+/**
+ * The twelve agent-tool names this plugin's announcement describes.
+ *
+ * The first six are the base plugin's; the rest are the fleet-operations
+ * layer added here.
+ */
+const SSH_TOOL_NAMES = [
+  'ssh_list', 'ssh_exec', 'ssh_upload', 'ssh_download', 'ssh_tunnel', 'ssh_cluster',
+  'hub_inspect', 'hub_inspect_catalog', 'hub_inspect_diff',
+  'hub_alerts', 'hub_alert_rules', 'hub_alert_test',
+  'hub_deploy', 'hub_log_search',
+] as const
 
 /** Model-facing announcement: plugin presence, capabilities, and limits. */
-export const SSH_GUIDANCE = '本机已安装 dsh-ssh 插件（DSH 远程 SSH 运维）：侧边栏「SSH」入口；在 dsh-web 插件全家桶仓库（packages/dsh-ssh）统一维护。能力：主机配置存 $DSH_HOME/dsh-ssh.json（默认 ~/.dsh）（可从 ~/.ssh/config 导入）；持久连接池复用长连接（空闲 30 分钟自动断开）；ssh_list 列出主机、ssh_exec 执行远程命令、ssh_upload/ssh_download 传输文件、ssh_tunnel 本地端口转发（访问远程数据库/内网服务）、ssh_cluster 按 aliases/environment/tags 至少一种非空 selector 筛选后集群并发执行；支持密钥/密码/ssh-agent 认证、passphrase 密钥、ProxyJump 跳板机（别名或 [user@]host[:port] 地址）与 OpenSSH 语义的 ProxyCommand（跳过堡垒机客户端场景，只能由用户在 GUI 配置，agent 不可写）；Web 终端走 WebSocket。限制：主机操作由用户在 GUI 中配置后 agent 方可使用；密码以明文存在用户主目录私有文件（权限 0600）；命令输出原样返回、可能含敏感信息；断线重连可能重放非幂等命令；传输/执行消耗真实远程资源，先确认再操作。路径区分：本机（dsh host）上的文件与命令一律用本地工具（read / write / edit / bash），ssh_* 工具只针对远程主机上的路径。用户提到「SSH / 远程服务器 / 服务器操作 / 跳板机 / 隧道 / 部署 / 上传下载」时即指本插件，请据此协作。'
+export const SSH_GUIDANCE = [
+  '本机已安装 dsh-ssh-hub 插件（DSH 远程 SSH 车队运维）：侧边栏「SSH」入口。',
+  '能力：主机配置存 $DSH_HOME/dsh-ssh.json（默认 ~/.dsh），可从 ~/.ssh/config 导入；',
+  '持久连接池复用长连接（空闲 30 分钟自动断开）；',
+  'ssh_list 列出主机、ssh_exec 执行远程命令、ssh_upload/ssh_download 传输文件、',
+  'ssh_tunnel 本地端口转发、ssh_cluster 按 aliases/environment/tags 至少一种非空 selector 集群并发执行；',
+  'hub_inspect 运行内置巡检项（磁盘/负载/内存/inode/运行时长/sshd/失败单元/内核）并留存本轮结果，',
+  'hub_inspect_diff 对比上一轮找出变化（值漂移、新增超限、已恢复），hub_inspect_catalog 列出巡检项；',
+  'hub_alerts 查看告警状态与事件、hub_alert_rules 调整规则、hub_alert_test 测试通知渠道；',
+  'hub_deploy 分批部署并做健康检查、失败自动回滚、跳过未部署主机；',
+  'hub_log_search 跨机检索 journald 或日志目录，结果按主机限量并提示截断。',
+  '内置巡检项均为只读 POSIX 命令，不在远程安装任何东西。',
+  '限制：主机操作由用户在 GUI 中配置后 agent 方可使用；',
+  '凭据在配置了 DSH_SSH_HUB_SECRET 时以 AES-256-GCM 加密落盘，未配置时保持明文（插件会提示不要在无密钥时保存密码）；',
+  '主机指纹可按 hostKeyPolicy=tofu/strict 对照 known_hosts 校验；',
+  '命令输出在返回前经脱敏（密码/token/私钥/连接串/云密钥），但脱敏是安全网不是保证；',
+  '断线重连可能重放非幂等命令；传输/执行消耗真实远程资源，先确认再操作。',
+  '路径区分：本机（dsh host）上的文件与命令一律用本地工具（read / write / edit / bash），ssh_* 工具只针对远程主机上的路径。',
+  '用户提到「SSH / 远程服务器 / 服务器操作 / 跳板机 / 隧道 / 部署 / 巡检 / 告警 / 日志检索 / 上传下载」时即指本插件，请据此协作。',
+].join('')
 
 /**
  * Mount the SSH engine, routes, tools, and announcement.
+ *
+ * The mount guard keys on THIS package's identity, not the upstream one:
+ * both plugins register the same HTTP route prefix and the same sidebar
+ * row, so they must never share a mount slot — and if an operator has both
+ * installed, only one of them may own the routes.
+ *
  * @param ctx - host plugin context carrying webServer/tools/systemPrompt.
  * @param config - resolved plugin config (schema defaults applied by the loader).
  */
-export const apply = mountOnce('@linxin666/dsh-ssh', applyImpl)
+export const apply = mountOnce('dsh-ssh-hub', applyImpl)
 
 function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   // The master secret for credential encryption. There is deliberately no
@@ -202,7 +244,12 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   // secret configured the store keeps the base plugin's plaintext
   // behaviour, so enabling encryption is a deliberate act.
   const masterSecret = readMasterSecret(ctx)
-  const protector: SecretProtector | undefined = masterSecret !== undefined
+  const encryptCredentials = readConfigField(config?.encryptCredentials, false)
+  // Encryption needs BOTH the operator's consent and a key. Consent without a
+  // key cannot encrypt; a key without consent must not encrypt, or an operator
+  // who never opted in would find their store rewritten in a format they did
+  // not choose.
+  const protector: SecretProtector | undefined = (encryptCredentials && masterSecret !== undefined)
     ? {
         seal: plaintext => seal(plaintext, masterSecret),
         open: stored => (isSealed(stored) ? open(stored, masterSecret) : undefined),
@@ -217,8 +264,19 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   })
   ctx.effect(() => () => { engine.dispose() }, 'dsh-ssh: engine')
 
+  // The audit trail: every mutation of the fleet and every command that
+  // changes a remote host is recorded. It is on by default, because an
+  // operator cannot retroactively decide to have had an audit log.
+  const audit = readConfigField(config?.auditEnabled, true) ? new AuditLog() : undefined
+
   // The inspection layer: retained rounds of the built-in fleet checks.
   const inspector = new Inspector()
+
+  // The alerting layer: rule state plus the recent event feed.
+  const alertEngine = new AlertEngine()
+  const alertRules = defaultRules()
+  const alertEvents: AlertEvent[] = []
+  const notifyChannels: NotifyChannel[] = []
 
   const resolve = (): { announceToAgent: boolean; enabled: boolean } => {
     let enabled = readConfigField(config?.enabled, DEFAULT_ENABLED)
@@ -240,16 +298,22 @@ function applyImpl(ctx: Context, config?: ResolvedConfig): void {
   let disposeRoutes: (() => void) | undefined
 
   // Agent tools + their prompt sections.
+  const recorder = new AuditRecorder(audit)
   const tools = [
     sshListTool(engine),
-    sshExecTool(engine),
-    sshUploadTool(engine),
-    sshDownloadTool(engine),
-    sshTunnelTool(engine),
-    sshClusterTool(engine),
+    sshExecTool(engine, recorder),
+    sshUploadTool(engine, recorder),
+    sshDownloadTool(engine, recorder),
+    sshTunnelTool(engine, recorder),
+    sshClusterTool(engine, recorder),
     hubInspectTool(engine, inspector),
     hubInspectCatalogTool(),
     hubInspectDiffTool(inspector),
+    hubAlertsTool(alertEngine, alertEvents),
+    hubAlertRulesTool(alertRules),
+    hubAlertTestTool(notifyChannels),
+    hubDeployTool(engine, recorder),
+    hubLogSearchTool(engine),
   ]
   let disposeTools: (() => void) | undefined
 

@@ -8,6 +8,8 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { SshEngine } from './engine.ts'
 import type { ClusterResult, ExecResult, SshAuthKind, SshHostSummary, TunnelInfo } from './protocol.ts'
+import { redactCommand, redactOutput } from './security/redact.ts'
+import type { AuditRecorder } from './audit/recorder.ts'
 
 /** One text content block (the only render shape these tools emit). */
 function text(value: string): ContentBlock[] {
@@ -142,7 +144,7 @@ export function sshListTool(engine: SshEngine) {
 }
 
 /** The command-execution tool. */
-export function sshExecTool(engine: SshEngine) {
+export function sshExecTool(engine: SshEngine, audit?: AuditRecorder) {
   return defineTool({
     name: 'ssh_exec',
     description: 'Execute a shell command on a REMOTE SSH host by alias; the command runs on the remote host, never on this machine. For commands on this machine, use the local bash tool. Prefer combining independent read-only queries into one command.',
@@ -171,8 +173,20 @@ export function sshExecTool(engine: SshEngine) {
       try {
         // Forward the caller's cancellation: aborting closes the remote channel
         // instead of leaving the command running on the host.
-        return await engine.exec(args.alias, args.command, args.timeoutMs, exec.signal)
+        const result = await engine.exec(args.alias, args.command, args.timeoutMs, exec.signal)
+        audit?.record('exec', {
+          ok: result.success,
+          targets: [args.alias],
+          summary: `exec on ${args.alias}: ${redactCommand(args.command)}`,
+          detail: { exitCode: result.exitCode, durationMs: result.durationMs },
+        })
+        return redactExecResult(result)
       } catch (error) {
+        audit?.record('exec', {
+          ok: false,
+          targets: [args.alias],
+          summary: `exec on ${args.alias} failed: ${redactCommand(args.command)}`,
+        })
         return {
           success: false,
           exitCode: null,
@@ -187,8 +201,27 @@ export function sshExecTool(engine: SshEngine) {
   })
 }
 
+/**
+ * Redact an exec result before it leaves the tool.
+ *
+ * The output becomes model context and, in DSH, part of the session log —
+ * so a secret printed by `env` would be written into a transcript that
+ * outlives the session. The redaction is a safety net, not a guarantee:
+ * the remote host may hold secrets in shapes this does not recognise.
+ *
+ * @param result - the raw exec result.
+ * @returns the redacted result.
+ */
+export function redactExecResult(result: ExecResult): ExecResult {
+  return {
+    ...result,
+    stdout: redactOutput(result.stdout),
+    stderr: redactOutput(result.stderr),
+  }
+}
+
 /** The upload tool. */
-export function sshUploadTool(engine: SshEngine) {
+export function sshUploadTool(engine: SshEngine, audit?: AuditRecorder) {
   return defineTool({
     name: 'ssh_upload',
     description: 'Transfer a file FROM this machine (the dsh host) TO a remote SSH host. Use this only when the file must be copied to the remote host. Files that stay on this machine are handled with the local file tools (read / write / edit), not ssh_upload.',
@@ -215,8 +248,19 @@ export function sshUploadTool(engine: SshEngine) {
     async execute(args) {
       try {
         const outcome = await engine.upload(args.alias, args.localPath, args.remotePath, false)
+        audit?.record('upload', {
+          ok: true,
+          targets: [args.alias],
+          summary: `upload to ${args.alias}: ${args.remotePath}`,
+          detail: { bytes: outcome.bytes, files: outcome.files },
+        })
         return { ok: true, transferredBytes: outcome.bytes, files: outcome.files }
       } catch (error) {
+        audit?.record('upload', {
+          ok: false,
+          targets: [args.alias],
+          summary: `upload to ${args.alias} failed: ${args.remotePath}`,
+        })
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
       }
     },
@@ -224,7 +268,7 @@ export function sshUploadTool(engine: SshEngine) {
 }
 
 /** The download tool. */
-export function sshDownloadTool(engine: SshEngine) {
+export function sshDownloadTool(engine: SshEngine, audit?: AuditRecorder) {
   return defineTool({
     name: 'ssh_download',
     description: 'Copy a remote FILE from a configured SSH host to this machine (the dsh host). Use this only when the source is on the remote host; files already on this machine are read with the local file tools (read / write / edit), not ssh_download. Directory download is not supported — download files individually.',
@@ -250,8 +294,19 @@ export function sshDownloadTool(engine: SshEngine) {
     async execute(args) {
       try {
         const outcome = await engine.download(args.alias, args.remotePath, args.localPath)
+        audit?.record('download', {
+          ok: true,
+          targets: [args.alias],
+          summary: `download from ${args.alias}: ${args.remotePath}`,
+          detail: { bytes: outcome.bytes },
+        })
         return { ok: true, bytes: outcome.bytes }
       } catch (error) {
+        audit?.record('download', {
+          ok: false,
+          targets: [args.alias],
+          summary: `download from ${args.alias} failed: ${args.remotePath}`,
+        })
         return { ok: false, error: error instanceof Error ? error.message : String(error) }
       }
     },
@@ -259,7 +314,7 @@ export function sshDownloadTool(engine: SshEngine) {
 }
 
 /** The tunnel tool. */
-export function sshTunnelTool(engine: SshEngine) {
+export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
   return defineTool({
     name: 'ssh_tunnel',
     description: 'Manage local port-forward tunnels to a configured SSH host. Start a tunnel to reach a remote internal service (database, web UI, API) through 127.0.0.1 on this machine.',
@@ -336,8 +391,19 @@ export function sshTunnelTool(engine: SshEngine) {
             remoteHost: args.remoteHost,
             localPort: args.localPort,
           })
+          audit?.record('tunnel.start', {
+            ok: true,
+            targets: [args.alias],
+            summary: `tunnel to ${args.alias}:${args.remotePort}`,
+            detail: { localPort: tunnel.localPort },
+          })
           return { ok: true, tunnel }
         } catch (error) {
+          audit?.record('tunnel.start', {
+            ok: false,
+            targets: [args.alias],
+            summary: `tunnel to ${args.alias}:${args.remotePort} failed`,
+          })
           return { ok: false, tunnel: { id: '', alias: args.alias, localPort: 0, remoteHost: args.remoteHost ?? '127.0.0.1', remotePort: args.remotePort, state: 'failed' as const, error: error instanceof Error ? error.message : String(error), startedAt: Date.now() } }
         }
       }
@@ -358,7 +424,7 @@ export function sshTunnelTool(engine: SshEngine) {
 }
 
 /** The cluster tool. */
-export function sshClusterTool(engine: SshEngine) {
+export function sshClusterTool(engine: SshEngine, audit?: AuditRecorder) {
   return defineTool({
     name: 'ssh_cluster',
     description: 'Run one command concurrently across selected SSH hosts; at least one aliases, environment, or tags filter is required.',
@@ -403,7 +469,24 @@ export function sshClusterTool(engine: SshEngine) {
         (Array.isArray(args.tags) && args.tags.some((tag) => typeof tag === 'string' && tag.trim() !== ''))
       if (!hasSelector) throw new Error('ssh_cluster requires aliases, environment, or tags to limit the target set')
       // Cancellation reaches every host's in-flight command.
-      return { results: await engine.cluster({ ...args, signal: exec.signal }) }
+      const results = await engine.cluster({ ...args, signal: exec.signal })
+      const failed = results.filter(result => !result.ok).map(result => result.alias)
+      audit?.record('cluster', {
+        ok: failed.length === 0,
+        targets: results.map(result => result.alias),
+        summary: `cluster exec on ${results.length} host(s): ${redactCommand(args.command)}`,
+        detail: { failedHosts: failed },
+      })
+      // Redact every host's output: the cluster result is one blob of
+      // output from N hosts, so a single secret in one of them would land
+      // in the session log.
+      return {
+        results: results.map(result => ({
+          ...result,
+          ...(result.stdout !== undefined ? { stdout: redactOutput(result.stdout) } : {}),
+          ...(result.stderr !== undefined ? { stderr: redactOutput(result.stderr) } : {}),
+        })),
+      }
     },
   })
 }
