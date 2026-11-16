@@ -227,7 +227,10 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 `label-primary` 混合。这一招在两套皮肤同时成立 —— `label-primary` 在浅色下近黑（压暗字形）、
 在深色下近白（提亮字形）。混合比例由实测反推，不是估计：
 
-- `--ssh-ink-muted` = `label-tertiary` 55%（muted 文字、列表头、占位符）
+- `--ssh-ink-muted` = `label-tertiary` 50% 混 `label-secondary`（muted 文字、列表头、占位符）。
+  **注意锚点是 secondary 而不是 primary**：往 primary 混会让 muted 在浅色下比 secondary 更深、
+  在深色下比它更浅，两套皮肤都变得「比次要文字更抢眼」，层级倒置。50% 实测 4.58:1（浅）/ 8.84:1（深），
+  既过 4.5 门槛又弱于 secondary 的 5.80 / 10.42。审计额外断言 `muted < secondary < primary`。
 - `--ssh-ok-text` / `--ssh-warn-text` / `--ssh-error-text` / `--ssh-info-text`
 - `--ssh-fill-primary` / `--ssh-fill-primary-hover` = 官方按钮色压暗 10%（白字从 4.23 → 5.06:1）
 

@@ -49,7 +49,12 @@
      the gap and works in both skins at once, because label-primary is near-black
      on the light skin and near-white on the dark one. Measured by
      scripts/audit-text-contrast.mjs; do not "tidy" these back to the raw tokens. */
-  --ssh-ink-muted: color-mix(in srgb, var(--dsw-alias-label-tertiary) 55%, var(--dsw-alias-label-primary));
+  /* Muted text mixes toward SECONDARY, not primary: pulling it toward primary
+     makes it darker than secondary in the light skin and lighter than it in the
+     dark one, i.e. louder than secondary either way, which inverts the
+     hierarchy. At 50% it measures 4.58:1 (light) and 8.84:1 (dark) — above the
+     4.5 floor and still quieter than secondary's 5.80 / 10.42. */
+  --ssh-ink-muted: color-mix(in srgb, var(--dsw-alias-label-tertiary) 50%, var(--dsw-alias-label-secondary));
   --ssh-ok-text: color-mix(in srgb, var(--dsw-alias-state-success-primary) 66%, var(--dsw-alias-label-primary));
   --ssh-warn-text: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 60%, var(--dsw-alias-label-primary));
   --ssh-error-text: color-mix(in srgb, var(--dsw-alias-state-error-primary) 80%, var(--dsw-alias-label-primary));

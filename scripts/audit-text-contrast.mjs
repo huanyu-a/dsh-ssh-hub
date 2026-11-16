@@ -324,10 +324,46 @@ for (const rule of rules) {
   }
 }
 
+/**
+ * Hierarchy check: muted text must be QUIETER than secondary text.
+ *
+ * Legibility and hierarchy pull against each other. My first calibrated muted
+ * colour cleared 4.5:1 easily but measured 7.97 against secondary's 5.80, i.e.
+ * muted text shouted louder than secondary and the visual order inverted. A
+ * contrast audit that only checks a floor cannot see that, so it is asserted
+ * here explicitly.
+ */
+const hierarchyFailures = []
+for (const skin of ['light', 'dark']) {
+  const map = skin === 'dark' ? DARK : LIGHT
+  const panelMap = panelTokens(map)
+  const backdrop = over(evaluate('var(--dsw-alias-bg-layer-1)', map, panelMap), skin === 'dark' ? { r: 21, g: 21, b: 23, a: 1 } : { r: 255, g: 255, b: 255, a: 1 })
+  const muted = evaluate('var(--ssh-ink-muted)', map, panelMap)
+  const secondary = evaluate('var(--dsw-alias-label-secondary)', map, panelMap)
+  const primary = evaluate('var(--dsw-alias-label-primary)', map, panelMap)
+  if (muted === undefined || secondary === undefined || primary === undefined) {
+    hierarchyFailures.push({ skin, reason: 'unresolved hierarchy token' })
+    continue
+  }
+  const mutedRatio = contrast(over(muted, backdrop), backdrop)
+  const secondaryRatio = contrast(over(secondary, backdrop), backdrop)
+  const primaryRatio = contrast(over(primary, backdrop), backdrop)
+  console.log(`hierarchy ${skin.padEnd(5)} muted ${mutedRatio.toFixed(2)} < secondary ${secondaryRatio.toFixed(2)} < primary ${primaryRatio.toFixed(2)}`)
+  if (!(mutedRatio < secondaryRatio && secondaryRatio < primaryRatio)) {
+    hierarchyFailures.push({ skin, mutedRatio, secondaryRatio, primaryRatio })
+  }
+}
+
 console.log(`text rules: ${rules.length}, measurements: ${checked}`)
-if (failures.length === 0) {
-  console.log('\nTEXT CONTRAST OK  every text rule clears its threshold in both skins')
+if (failures.length === 0 && hierarchyFailures.length === 0) {
+  console.log('\nTEXT CONTRAST OK  every text rule clears its threshold in both skins, and muted < secondary < primary holds')
   process.exit(0)
+}
+if (hierarchyFailures.length > 0) {
+  console.log(`\nHIERARCHY FAILURES: ${hierarchyFailures.length}`)
+  for (const failure of hierarchyFailures) {
+    console.log(`  ${failure.skin}: ${failure.reason ?? `muted ${failure.mutedRatio.toFixed(2)} / secondary ${failure.secondaryRatio.toFixed(2)} / primary ${failure.primaryRatio.toFixed(2)} — muted text must stay quieter than secondary`}`)
+  }
 }
 console.log(`\nFAILURES: ${failures.length}`)
 // Group by rule so one bad token is one line, not six.
