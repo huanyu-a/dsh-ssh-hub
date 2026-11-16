@@ -41,6 +41,27 @@
   --ssh-chrome: var(--dsw-alias-bg-layer-1);
   --ssh-tab-hover: color-mix(in srgb, var(--dsw-alias-label-primary) 5%, transparent);
   --ssh-tab-active: color-mix(in srgb, var(--dsw-alias-label-primary) 10%, transparent);
+  /* Calibrated TEXT colours.
+     The raw state-* and label-tertiary tokens are built for dots and fills, not
+     glyphs: on the light skin state-success measures 2.28:1 and state-warn
+     2.15:1 against white, roughly half the 4.5:1 floor for body text, and
+     label-tertiary lands at 3.71:1. Pulling each hue toward label-primary closes
+     the gap and works in both skins at once, because label-primary is near-black
+     on the light skin and near-white on the dark one. Measured by
+     scripts/audit-text-contrast.mjs; do not "tidy" these back to the raw tokens. */
+  --ssh-ink-muted: color-mix(in srgb, var(--dsw-alias-label-tertiary) 55%, var(--dsw-alias-label-primary));
+  --ssh-ok-text: color-mix(in srgb, var(--dsw-alias-state-success-primary) 66%, var(--dsw-alias-label-primary));
+  --ssh-warn-text: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 60%, var(--dsw-alias-label-primary));
+  --ssh-error-text: color-mix(in srgb, var(--dsw-alias-state-error-primary) 80%, var(--dsw-alias-label-primary));
+  --ssh-info-text: color-mix(in srgb, var(--dsw-alias-state-business-primary) 80%, var(--dsw-alias-label-primary));
+  /* Solid-fill buttons carry their own foreground, so they are a separate case:
+     `label-primary-foreground` (white in the light skin) on
+     `button-info-fill` (rgb(65,118,230)) measures 4.23:1 — just under the floor,
+     and the theme has no darker info fill to switch to. Pulling the fill 10%
+     toward the foreground's opposite reaches 5.06:1 while staying visually the
+     same blue. */
+  --ssh-fill-primary: color-mix(in srgb, var(--dsw-alias-button-info-fill) 90%, var(--dsw-alias-label-primary));
+  --ssh-fill-primary-hover: color-mix(in srgb, var(--dsw-alias-button-info-hover) 90%, var(--dsw-alias-label-primary));
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -252,7 +273,7 @@
 }
 
 .search::placeholder {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
 }
 
 .groupBySelect {
@@ -332,7 +353,7 @@
 }
 
 .groupCount {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   font-weight: 400;
   flex: none;
 }
@@ -368,7 +389,7 @@
   padding: 11px 14px;
   text-align: left;
   background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -419,11 +440,11 @@
 }
 
 .hostsTable tbody tr[data-state='ok'] td:first-child {
-  border-left-color: var(--dsw-alias-state-success-primary);
+  border-left-color: var(--ssh-ok-text);
 }
 
 .hostsTable tbody tr[data-state='fail'] td:first-child {
-  border-left-color: var(--dsw-alias-state-error-primary);
+  border-left-color: var(--ssh-error-text);
 }
 
 .hostsTable tbody tr[data-state='testing'] td:first-child {
@@ -461,7 +482,7 @@
   font-family: var(--ssh-data-face);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -477,7 +498,7 @@
 }
 
 .cellMuted {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
 }
 
 .tagList {
@@ -522,7 +543,7 @@
   min-height: 24px;
   padding: 0;
   font-size: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   background: none;
   border: none;
   cursor: pointer;
@@ -540,7 +561,7 @@
 }
 
 .actionLink[data-danger]:hover:not(:disabled) {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--ssh-error-text);
 }
 
 .connectButton {
@@ -553,7 +574,7 @@
   font-size: 12px;
   font-weight: 650;
   color: var(--dsw-alias-label-primary-foreground);
-  background: var(--dsw-alias-button-info-fill);
+  background: var(--ssh-fill-primary);
   border: 1px solid transparent;
   border-radius: var(--ssh-radius);
   cursor: pointer;
@@ -562,7 +583,7 @@
 }
 
 .connectButton:hover {
-  background: var(--dsw-alias-button-info-hover);
+  background: var(--ssh-fill-primary-hover);
 }
 
 .inlineTest {
@@ -582,11 +603,11 @@
 }
 
 .inlineTest[data-status='ok'] {
-  color: var(--dsw-alias-state-success-primary);
+  color: var(--ssh-ok-text);
 }
 
 .inlineTest[data-status='fail'] {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--ssh-error-text);
 }
 
 /* --- status and instrument keys ------------------------------------------------
@@ -628,7 +649,7 @@
 .badge[data-status='pending'],
 .badge[data-status='warn'],
 .badge[data-status='timeout'] {
-  color: var(--dsw-alias-state-warn-primary);
+  color: var(--ssh-warn-text);
 }
 
 .badge[data-status='pending']::before,
@@ -638,7 +659,7 @@
 }
 
 .badge[data-status='ok'] {
-  color: var(--dsw-alias-state-success-primary);
+  color: var(--ssh-ok-text);
 }
 
 .badge[data-status='ok']::before {
@@ -647,7 +668,7 @@
 
 .badge[data-status='fail'],
 .badge[data-status='error'] {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--ssh-error-text);
 }
 
 .badge[data-status='fail']::before,
@@ -666,7 +687,7 @@
   font-size: 12px;
   font-weight: 650;
   color: var(--dsw-alias-label-primary-foreground);
-  background: var(--dsw-alias-button-info-fill);
+  background: var(--ssh-fill-primary);
   border: 1px solid transparent;
   border-radius: var(--ssh-radius);
   cursor: pointer;
@@ -675,7 +696,7 @@
 }
 
 .primaryButton:hover:not(:disabled) {
-  background: var(--dsw-alias-button-info-hover);
+  background: var(--ssh-fill-primary-hover);
 }
 
 .primaryButton:disabled {
@@ -751,7 +772,7 @@
 }
 
 .linkButton[data-danger] {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--ssh-error-text);
 }
 
 /* Keyboard focus, once, for everything the panel renders. `:focus-visible` so a
@@ -850,13 +871,13 @@
 }
 
 .banner[data-kind='ok'] {
-  color: var(--dsw-alias-state-success-primary);
-  border-left-color: var(--dsw-alias-state-success-primary);
+  color: var(--ssh-ok-text);
+  border-left-color: var(--ssh-ok-text);
 }
 
 .banner[data-kind='error'] {
-  color: var(--dsw-alias-state-error-primary);
-  border-left-color: var(--dsw-alias-state-error-primary);
+  color: var(--ssh-error-text);
+  border-left-color: var(--ssh-error-text);
 }
 
 .banner[data-kind='info'] {
@@ -869,7 +890,7 @@
   padding: 40px 16px;
   text-align: center;
   font-size: 12px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   border: 1px dashed var(--dsw-alias-border-l1);
   border-radius: var(--ssh-radius);
   background: var(--dsw-alias-bg-base);
@@ -944,12 +965,12 @@
 .formError {
   margin: 0;
   font-size: 12px;
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--ssh-error-text);
 }
 
 .hint {
   font-size: 11px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
 }
 
 .field {
@@ -978,7 +999,7 @@
 }
 
 .input::placeholder {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
 }
 
 .input:disabled {
@@ -1072,11 +1093,11 @@
   flex: none;
   font-size: 11px;
   font-weight: 400;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
 }
 
 .termTabState[data-state='error'] {
-  color: var(--dsw-alias-state-error-primary);
+  color: var(--ssh-error-text);
 }
 
 .termTabState[data-state='exited'] {
@@ -1095,7 +1116,7 @@
   padding: 0;
   font-size: 13px;
   line-height: 1;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   background: transparent;
   border: none;
   border-radius: 5px;
@@ -1215,7 +1236,7 @@
 }
 
 .dirRow[data-type='dir'] .dirName {
-  color: var(--dsw-alias-state-business-primary);
+  color: var(--ssh-info-text);
 }
 
 .dirRow[data-up] {
@@ -1230,12 +1251,12 @@
 }
 
 .dirType {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   white-space: nowrap;
 }
 
 .dirSize {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   white-space: nowrap;
   text-align: right;
 }
@@ -1290,15 +1311,15 @@
 }
 
 .tunnelRow[data-state='forwarding'] {
-  border-left-color: var(--dsw-alias-state-success-primary);
+  border-left-color: var(--ssh-ok-text);
 }
 
 .tunnelRow[data-state='connecting'] {
-  border-left-color: var(--dsw-alias-state-warn-primary);
+  border-left-color: var(--ssh-warn-text);
 }
 
 .tunnelRow[data-state='failed'] {
-  border-left-color: var(--dsw-alias-state-error-primary);
+  border-left-color: var(--ssh-error-text);
 }
 
 /* A forward owned by another process: visible, not stoppable from here. The
@@ -1306,13 +1327,13 @@
 .tunnelRow[data-source='external'] {
   border-style: dashed;
   border-left-style: solid;
-  border-left-color: var(--dsw-alias-label-tertiary);
+  border-left-color: var(--ssh-ink-muted);
 }
 
 .tunnelState {
   flex: none;
   font-size: 11px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--ssh-ink-muted);
   white-space: nowrap;
 }
 
@@ -1562,7 +1583,7 @@
 }
 
 .banner[data-kind='warn'] {
-  color: var(--dsw-alias-state-warn-primary);
-  border-left-color: var(--dsw-alias-state-warn-primary);
+  color: var(--ssh-warn-text);
+  border-left-color: var(--ssh-warn-text);
 }
 

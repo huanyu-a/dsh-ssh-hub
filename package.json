@@ -1,6 +1,6 @@
 {
   "name": "dsh-ssh-hub",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "private": true,
   "description": "Server fleet operations hub for DeepSeek Harness: SSH transport (inherited from @linxin666/dsh-ssh) plus inspection, metrics/alerting, deployment orchestration, cross-host log search, credential hardening and audit trail.",
   "icon": "./icon.svg",
@@ -47,7 +47,9 @@
     "build:types": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run test && npm run build && npm run pack:check",
+    "check": "npm run typecheck && npm run test && npm run build && npm run verify:client && npm run verify:contrast && npm run pack:check",
+    "verify:client": "node scripts/verify-client.mjs",
+    "verify:contrast": "node scripts/verify-contrast.mjs && node scripts/audit-text-contrast.mjs",
     "pack:check": "node scripts/package-artifact.mjs",
     "pack": "npm pack --pack-destination artifacts"
   },

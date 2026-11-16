@@ -208,15 +208,43 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 **已被否决的方案：深色「设备机箱」页头。** 曾经把标题区 + 页签条做成固定的石墨色孤岛
 （`#1b2530` + `#e6edf3` 前景），想让面板一眼区别于通用后台。实测在宿主页面里它读起来像
 **另一个应用被塞进了页面**，与周围明暗主题脱节。因此页头回到主题令牌
-（`--ssh-chrome = bg-layer-1` + `border-l1`），选中页签用品牌色下划线 + `bg-layer-2` 填充。
-**只有终端保留深色**（`#0b0e14`），因为终端本来就该是深色；终端内的占位层也随之改成深色半透明，
-避免浅色皮肤下闪一块白。`verify-client.mjs` 反向断言禁止 `--ssh-rack-*` / `color-scheme: dark` 回归。
+（`--ssh-chrome = bg-layer-1` + `border-l1`）。**只有终端保留深色**（`#0b0e14`），因为终端本来就该是深色；
+终端内的占位层也随之改成深色半透明，避免浅色皮肤下闪一块白。
+`verify-client.mjs` 反向断言禁止 `--ssh-rack-*` / `color-scheme: dark` 回归。
+
+**校准过的文字色（P3-j）。** 放弃机箱孤岛后仍有一批令牌不合 WCAG —— 问题不在骨架，而在
+「把为圆点和填充块设计的令牌拿去当文字用」。实测（`scripts/audit-text-contrast.mjs`，双皮肤）：
+
+| 令牌 | 浅色下作为文字 | 结论 |
+|---|---|---|
+| `state-success` = `rgb(34,197,94)` | 2.28:1 | 约 4.5 门槛的一半 |
+| `state-warn` = `rgb(245,158,11)` | 2.15:1 | 同上 |
+| `label-tertiary` | 3.71:1 | 不到正文门槛 |
+| `state-business` | 4.23:1 | 差一点 |
+| 白字压 `button-info-fill` `rgb(65,118,230)` | 4.23:1 | 基座按钮本身差 0.27 |
+
+做法不是逐个调色，而是**在 `.panel` 上建立一组校准后的文字令牌**：把每个色相往
+`label-primary` 混合。这一招在两套皮肤同时成立 —— `label-primary` 在浅色下近黑（压暗字形）、
+在深色下近白（提亮字形）。混合比例由实测反推，不是估计：
+
+- `--ssh-ink-muted` = `label-tertiary` 55%（muted 文字、列表头、占位符）
+- `--ssh-ok-text` / `--ssh-warn-text` / `--ssh-error-text` / `--ssh-info-text`
+- `--ssh-fill-primary` / `--ssh-fill-primary-hover` = 官方按钮色压暗 10%（白字从 4.23 → 5.06:1）
+
+同时修掉一个真实缺陷：浅色皮肤下 `bg-base`、`bg-layer-1`、`bg-layer-2` **全部是纯白**，
+所以「用 `bg-layer-2` 填充选中页签」等于白上填白，选中态只剩字体粗细。页签填充改为
+`label-primary` 的 5% / 10% 混合，在白底和近黑底上都产生可见层次。
+
+**纪律：颜色写进样式表前必须先被算过。** 两个审计脚本已进 `npm run check`：
+`verify-contrast.mjs` 查我手工指定的关键配对，`audit-text-contrast.mjs` 扫**全部** 70 条含
+`color:` 的规则（308 次测量，深浅两套皮肤 × 全部可能落点）。任一低于门槛即非零退出。
+它们自己从 `app.asar` 解出官方主题，读不到就报 SKIP 并退出 2 —— 绝不假装验证过。
 
 **改了什么：**
 
 | 面 | 第一版 | 第二版 |
 |---|---|---|
-| 标题 + 页签 | 下划线页签 | 与面板同底色的页头 + 品牌色下划线选中态（不做深色孤岛） |
+| 标题 + 页签 | 下划线页签 | 与面板同底色的页头 + 品牌色下划线选中态 + `label-primary` 混合填充（不做深色孤岛） |
 | 主机表 | 圆角卡片、状态点 | 连续台账、3px 状态轨、大写列表头、行高 60px |
 | 徽章 | 状态点 + 文字 | 矩形读数（侧条 + 文字）；**认证方式归为中性元数据**，password 不再像警告、agent 不再像健康；`warn/pending/timeout` 仍是琥珀色，不掩盖真实告警 |
 | 按钮 | 圆角 7px、品牌实心 | 圆角 5px、32px 统一高 |
@@ -233,7 +261,8 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 - 窄屏（≤720px）收紧 padding，操作列 `position:sticky; right:0` 保证主操作始终可达。
 
 **验证**：`verify-client.mjs` 断言页头走主题令牌，并**反向**禁止 `--ssh-rack-*` 与
-`color-scheme: dark` 回归。
+`color-scheme: dark` 回归；`verify-contrast.mjs` + `audit-text-contrast.mjs` 在两套皮肤下
+实测全部文字配对达标（当前 308 次测量全绿）。
 
 ### 3.2 与本地 OpenSSH 的一致性（P3-h）
 
