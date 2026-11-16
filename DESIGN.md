@@ -107,15 +107,23 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 - 冷却只挡「重新触发」，恢复一定通知
 
 **D5｜凭据用「加密信封」，密钥与配置分离。**
-`secrets.json` 用 AES-256-GCM，加密密钥由 scrypt(主密码) 派生。
-主密码来源三选一：环境变量 `DSH_SSH_HUB_KEY_FILE` / 系统钥匙串 / 交互输入。
-主密码丢失 = 数据不可解——**必须在 UI 明示**，并在安装时强制用户设定（不可用默认值兜底）。
+`dsh-ssh.json` 里的口令/密钥口令用 AES-256-GCM，加密密钥由 scrypt(主密码) 派生，每个密文独立 IV。
+**主密码唯一来源：环境变量 `DSH_SSH_HUB_SECRET`**（实现取值）。
+没有默认值——默认主密码就是后门；未配置时凭据保持明文（这是运维者自己的选择，不是静默降级）。
+主密码丢失 = 数据不可解。
+
+> 实现说明：DSH 的 credentials service 是异步的，而插件 `apply` 是同步的，
+> 因此挂载时读不到异步凭据；该路径已移除而不是留一个假装能用的分支。
+> 交互式设定主密码需要异步入口（见 §3 的 P3），当前版本明确只支持环境变量。
+> `encryptCredentials` 与主密码**两者都具备**才会加密：单有开关无密钥无法加密，
+> 单有密钥无开关则不擅自改写运维者没选的存储格式。
 
 **D6｜主机指纹走 `~/.ssh/known_hosts`，不自己造。**
 基座的 `buildConnectConfig` 没有设 `hostVerifier`——这是真实 MITM 面。
 修法：在 `buildConnectConfig` 注入 ssh2 的 `hostVerifier`，
 复用 OpenSSH 的 known_hosts 解析（明文 / bracket / 通配 / hashed / revoked 条目、SHA256 指纹）。
 未登记的主机按策略处理：`strict` 拒绝 / `tofu` 首次记录并提示 / `off` 保留旧行为（默认，不破坏存量用户）。
+密钥变更或吊销在任何策略下都拒绝。
 
 **D7｜部署编排必须有「回滚」这一等公民。**
 分批（batch）+ 健康探针 + 失败自动回滚到上一版本。
@@ -134,33 +142,41 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 
 ### P0 · 安全与可信基线（先做，因为它是「不敢用」的原因）
 
-| 编号 | 能力 | 交付判据 |
-|---|---|---|
-| P0-a | known_hosts 主机指纹强制校验 | 改过的主机密钥被拒并给出期望 vs 实际指纹；`tofu` 模式首连落盘；`off` 保持旧行为 |
-| P0-b | 凭据加密 + 审计日志 | `dsh-ssh.json` 里不再出现明文口令；审计记录含操作/目标/结果/时间戳；密文文件权限 0600 |
-| P0-c | 移除第三方遥测 | 抓包/grep 确认不再向 dsh-market.com 外发 |
+| 编号 | 能力 | 交付判据 | 状态 |
+|---|---|---|---|
+| P0-a | known_hosts 主机指纹强制校验 | 改过的主机密钥被拒并给出期望 vs 实际指纹；`tofu` 模式首连落盘；`off` 保持旧行为 | ✅ 22 测试 |
+| P0-b | 凭据加密 + 审计日志 | `dsh-ssh.json` 里不再出现明文口令；审计记录含操作/目标/结果/时间戳；密文文件权限 0600 | ✅ 27 测试 |
+| P0-c | 移除第三方遥测 | 构建产物里不再出现 dsh-market.com 端点 | ✅ 构建产物 grep 实测 |
+| P0-d | 巡检项 + 执行 + 结果留存 + 对比 | 定义检查项 → 运行 → 留存 JSON Lines → 「本次 vs 上次」diff | ✅ 26+7 测试 |
 
 ### P1 · 运维语义（真正的「管理」）
 
-| 编号 | 能力 | 交付判据 |
-|---|---|---|
-| P1-a | 巡检项 + 执行 + 结果留存 + 对比 | 定义一个检查项 → 定时跑 → 面板看到「本次 vs 上次」与历史曲线 |
-| P1-b | 指标采集 + 历史落盘 | CPU/内存/磁盘/负载/网络趋势，按主机留 raw/1m/15m/1h 分级 |
-| P1-c | 告警规则引擎 + 通知 | 规则含方向/阈值/持续轮数/冷却/范围；null 冻结；通知预设可发；恢复必通知 |
-| P1-d | 输出脱敏 | `env` 类命令的密钥不进对话记录 |
+| 编号 | 能力 | 交付判据 | 状态 |
+|---|---|---|---|
+| P1-a | 巡检项 + 执行 + 结果留存 + 对比 | 见 P0-d | ✅ |
+| P1-b | 指标采集 + 历史落盘 | CPU/内存/磁盘/负载/网络趋势，按主机留 raw/1m/15m/1h 分级 | ⏸ 未做（巡检项已覆盖水位，趋势分级采集留待 P3） |
+| P1-c | 告警规则引擎 + 通知 | 规则含方向/阈值/持续轮数/冷却/范围；null 冻结；通知预设可发；恢复必通知 | ✅ 18 测试 |
+| P1-d | 输出脱敏 | `env` 类命令的密钥不进对话记录 | ✅ 13 测试 |
 
 ### P2 · 变更与追溯
 
-| 编号 | 能力 | 交付判据 |
-|---|---|---|
-| P2-a | 部署编排 | 分批发布 → 健康检查 → 失败自动回滚；无上一版时如实报告不可回滚 |
-| P2-b | 跨机日志检索 | 按关键字 + 时间窗跨 N 台 grep，结果按主机聚合 |
+| 编号 | 能力 | 交付判据 | 状态 |
+|---|---|---|---|
+| P2-a | 部署编排 | 分批发布 → 健康检查 → 失败自动回滚；无上一版时如实报告不可回滚 | ✅ 15 测试 |
+| P2-b | 跨机日志检索 | 按关键字 + 时间窗跨 N 台 grep，结果按主机聚合 | ✅ 20 测试 |
 
-### P3 · 体验与规模化
+### P3 · 体验与规模化（未开始）
 
+- 面板页签：巡检历史曲线 / 告警列表 / 部署记录 / 日志检索结果
 - 主机分组视图 / 一键巡检 / 告警到会话（action card 或 followup）
-- 定时任务（cron）驱动巡检与发布
+- 定时任务（cron）驱动巡检与发布 —— 当前巡检由 agent 主动调用触发，没有后台定时器
+- 交互式设定主密码（当前仅支持 `DSH_SSH_HUB_SECRET` 环境变量）
 - >50 台时的分级采集与背压（10–50 台当前规模下优先级低）
+
+> **当前版本的已知边界**：巡检与告警**没有内置定时器**。`hub_inspect` 由 agent 显式调用，
+> 告警状态机随每次巡检轮次推进；想让它自动跑，需要接 DSH 的定时任务或 `cordis-plugin-timer`。
+> 这是有意的取舍：先让语义正确，再加定时器，而不是让一个会自己跑、但判定逻辑还没定型的
+> 定时器在生产环境里制造假告警。
 
 ---
 
@@ -182,20 +198,33 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | 文件 | 改动 | 理由 |
 |---|---|---|
 | `src/engine/connection-pool.ts` | `buildConnectConfig` 注入 `hostVerifier` | D6：主机指纹校验 |
+| `src/engine.ts` | `ResolvedEngineOptions`（回调保持可选） | 类型：与连接池的 Options 对齐 |
 | `src/store.ts` | 口令字段改为引用加密信封 | D5：凭据加密 |
-| `src/tools.ts` | 现有 6 工具加脱敏出口 | D8 |
-| `src/client/telemetry.ts` | 删除 | P0-c |
-| `src/index.ts` | 挂载新增能力层 | 装配 |
-| `src/security/*`、`src/audit/*`、`src/inspect/*`、`src/metrics/*`、`src/alerting/*`、`src/deploy/*`、`src/logs/*` | 全新 | 新能力 |
-| `src/client/panel/*` | 新增页签 | 新 UI |
+| `src/tools.ts` | 现有 6 工具加脱敏出口 + 审计记录 | D8 + P0-b |
+| `src/index.ts` | 挂载新增能力层；`mountOnce` 改用本包 identity | 装配 |
+| `src/client/telemetry.ts` | **已删除** | P0-c |
+| `src/client/index.ts` | 移除心跳调用 | P0-c |
+| `src/security/{known-hosts,secrets,redact}.ts` | 全新 | D5 / D6 / D8 |
+| `src/audit/{audit-log,recorder}.ts` | 全新 | P0-b |
+| `src/inspect/{checks,inspection,tools}.ts` | 全新 | P0-d |
+| `src/alerting/{rules,notify,tools}.ts` | 全新 | P1-c |
+| `src/deploy/{orchestrator,tools}.ts` | 全新 | P2-a |
+| `src/logs/{search,tools}.ts` | 全新 | P2-b |
+| `cordis.patch.yml` | 新增 | bundle 行（row id `ssh-hub`） |
+| `scripts/package-artifact.mjs`、`scripts/tarball-reader.mjs` | 全新 | 打包产物 SHA 校验 |
+
+> `src/client/panel/*` **未改动**：当前版本沿用基座的五个页签（hosts/terminal/transfer/tunnels/cluster），
+> 新能力目前只通过 agent 工具暴露，尚未做面板页签（P3）。
 
 ---
 
 ## 6. 验证方法
 
-| 层级 | 方法 |
-|---|---|
-| 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机（null 冻结 / 冷却 / 连续轮数）、部署状态机 |
-| 集成 | 内嵌 ssh2 Server（沿用基座测试手法）跑真实 exec/cluster/巡检 |
-| 契约 | 每个工具必须有 `output: { schema, render }`（缺失会让 cordis 回滚整个 entry，症状是「路由全 401」） |
-| 真机 | 装进 desktop profile → 重启 → 面板截图 + 工具实测 |
+| 层级 | 方法 | 实测结果 |
+|---|---|---|
+| 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机（null 冻结 / 冷却 / 连续轮数）、部署状态机、日志命令构造与解析 | ✅ 148 测试 / 9 文件全绿 |
+| 类型 | `tsc --noEmit`（strict）+ `tsc -p tsconfig.build.json` | ✅ 通过 |
+| 契约 | 每个工具必须有 `output: { schema, render }`（缺失会让 cordis 回滚整个 entry，症状是「路由全 401」） | ✅ 14 个工具全部注册 |
+| 打包 | `npm pack` 后解包逐文件比对 SHA-256 | ✅ 58 个文件与磁盘一致 |
+| 运行时 | 装进 desktop profile → `cordis_inspect` 查 Tool 清单 | ✅ 14 个工具在册；`/api/dsh-ssh/hosts` 返回 200；Config 投影 8 个字段 |
+| 真机 SSH | 内嵌 ssh2 Server 跑真实 exec/cluster/巡检 | ⏸ 未做（需要真实 Linux 主机） |
