@@ -2,9 +2,13 @@
  * Host config store: one JSON file (`$DSH_HOME/dsh-ssh.json`, defaulting
  * to `~/.dsh`) holding every
  * SSH host entry, written atomically (tmp + rename). Also parses the user's
- * standard `~/.ssh/config` for one-shot import. Secrets (passwords,
- * passphrases) live in this user-owned file in plaintext — same trust model
- * as ssh-skill's annotated ssh-config comments; document it, never log it.
+ * standard `~/.ssh/config` for one-shot import.
+ *
+ * Secrets (passwords, passphrases) are protected by a `SecretProtector`
+ * when one is configured: the stored value is then an encrypted envelope
+ * instead of plaintext. Without a protector the store keeps the base
+ * plugin's plaintext behaviour, so an existing installation is never
+ * locked out by enabling encryption.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
@@ -13,6 +17,20 @@ import { dirname, join, resolve } from 'node:path'
 import { dshHome } from './dsh-home.ts'
 import type { HostPayload, ImportResult, ImportSkipBlock, ImportSkipReason, SshHostEntry, SshHostSummary } from './protocol.ts'
 import { readSshConfigBlocks } from './ssh-config.ts'
+
+/**
+ * Encrypts and decrypts the secrets stored alongside a host entry.
+ *
+ * A protector is optional on purpose: with no master secret configured the
+ * store writes plaintext exactly as the base plugin did, so switching
+ * encryption on is a deliberate act by the operator.
+ */
+export interface SecretProtector {
+  /** Encrypt one secret for storage. */
+  seal(plaintext: string): unknown
+  /** Decrypt a stored secret; returns undefined when it is not a sealed value. */
+  open(stored: unknown): string | undefined
+}
 
 /** File format version. */
 const FORMAT_VERSION = 1
@@ -95,25 +113,77 @@ export class HostStore {
   readonly path: string
   /** Optional override of the ~/.ssh/config path (tests). */
   private readonly sshConfigOverride: string | undefined
+  /** Optional encryptor for the stored secrets. */
+  private readonly protector: SecretProtector | undefined
 
   /**
    * @param path - store file path (defaults to the standard location).
    * @param sshConfigOverride - ssh config path override (tests only).
+   * @param protector - encryptor for stored secrets (tests / production).
    */
-  constructor(path?: string, sshConfigOverride?: string) {
+  constructor(path?: string, sshConfigOverride?: string, protector?: SecretProtector) {
     this.path = resolve(path ?? storePath())
     this.sshConfigOverride = sshConfigOverride
+    this.protector = protector
   }
 
   /** Load all entries (empty store when the file is absent). */
   list(): SshHostEntry[] {
     const file = this.load()
-    return file.hosts
+    // The file holds the secrets as stored (sealed or plaintext); the
+    // in-memory shape always carries plaintext, because that is what the
+    // SSH layer needs.
+    return file.hosts.map(entry => this.decryptEntry(entry))
   }
 
   /** Find one entry by alias. */
   find(alias: string): SshHostEntry | undefined {
     return this.list().find(entry => entry.alias === alias)
+  }
+
+  /**
+   * Decrypt one stored entry's secrets.
+   *
+   * A value that is not a sealed envelope is passed through unchanged, so
+   * a store written before encryption was enabled keeps working.
+   *
+   * @param entry - the stored entry.
+   * @returns the entry with plaintext secrets.
+   */
+  private decryptEntry(entry: SshHostEntry): SshHostEntry {
+    if (this.protector === undefined) return entry
+    const password = this.protector.open(entry.auth.password)
+    const passphrase = this.protector.open(entry.auth.passphrase)
+    if (password === undefined && passphrase === undefined) return entry
+    return {
+      ...entry,
+      auth: {
+        ...entry.auth,
+        ...(password !== undefined ? { password } : {}),
+        ...(passphrase !== undefined ? { passphrase } : {}),
+      },
+    }
+  }
+
+  /**
+   * Encrypt one entry's secrets for storage.
+   *
+   * @param entry - the entry with plaintext secrets.
+   * @returns the entry as it is written to disk.
+   */
+  private encryptEntry(entry: SshHostEntry): SshHostEntry {
+    if (this.protector === undefined) return entry
+    const password = entry.auth.password
+    const passphrase = entry.auth.passphrase
+    if (password === undefined && passphrase === undefined) return entry
+    return {
+      ...entry,
+      auth: {
+        ...entry.auth,
+        ...(password !== undefined ? { password: this.protector.seal(password) as string } : {}),
+        ...(passphrase !== undefined ? { passphrase: this.protector.seal(passphrase) as string } : {}),
+      },
+    }
   }
 
   /** Secret-free projection for the browser and agent surfaces. */
@@ -183,7 +253,7 @@ export class HostStore {
       createdAt: now,
       updatedAt: now,
     }
-    file.hosts.push(entry)
+    file.hosts.push(this.encryptEntry(entry))
     this.save(file)
     return entry
   }
@@ -191,8 +261,11 @@ export class HostStore {
   /** Update the fields present in `patch`; unknown aliases throw. */
   update(alias: string, patch: Partial<HostPayload>): SshHostEntry {
     const file = this.load()
-    const entry = file.hosts.find(candidate => candidate.alias === alias)
-    if (entry === undefined) throw new Error(`alias '${alias}' not found`)
+    const stored = file.hosts.find(candidate => candidate.alias === alias)
+    if (stored === undefined) throw new Error(`alias '${alias}' not found`)
+    // Patch a decrypted copy: the stored entry may hold sealed secrets, and
+    // mutating it in place would mix plaintext and ciphertext.
+    const entry = this.decryptEntry(stored)
     // Partial-patch validation: only the present fields are checked (a
     // caller may update just tags without resending host/user).
     if (patch.host !== undefined && (typeof patch.host !== 'string' || patch.host.trim() === '')) {
@@ -265,6 +338,9 @@ export class HostStore {
     // PATCH semantics: an omitted key keeps the stored value, false clears it.
     if (patch.forwardAgent !== undefined) entry.forwardAgent = patch.forwardAgent === true ? true : undefined
     entry.updatedAt = Date.now()
+    // Write the encrypted copy back over the stored one.
+    const index = file.hosts.findIndex(candidate => candidate.alias === alias)
+    file.hosts[index] = this.encryptEntry(entry)
     this.save(file)
     return entry
   }

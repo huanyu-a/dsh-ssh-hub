@@ -50,8 +50,17 @@ export interface EngineOptions {
  */
 export const DEFAULT_CONNECT_TIMEOUT_MS = 30_000
 
+/**
+ * The engine knobs with every optional filled in.
+ *
+ * `onHostKeyRecord` is deliberately left optional even here: it is a
+ * callback, not a knob, and `Required<>` would force every construction
+ * site to spell out `undefined`.
+ */
+export type ResolvedEngineOptions = Required<Omit<EngineOptions, 'onHostKeyRecord'>> & Pick<EngineOptions, 'onHostKeyRecord'>
+
 /** Default engine knobs (applied when an option is omitted). */
-export const DEFAULTS: Required<EngineOptions> = {
+export const DEFAULTS: ResolvedEngineOptions = {
   idleTimeoutMs: 30 * 60_000,
   connectTimeoutMs: DEFAULT_CONNECT_TIMEOUT_MS,
   keepaliveIntervalMs: 15_000,
@@ -61,7 +70,6 @@ export const DEFAULTS: Required<EngineOptions> = {
   sftpConcurrency: 8,
   hostKeyPolicy: 'off',
   knownHostsPath: '',
-  onHostKeyRecord: undefined,
 }
 
 /** One pooled connection record. */
@@ -83,13 +91,13 @@ export interface PoolRecord {
  */
 export interface PoolEngine {
   readonly store: HostStore
-  readonly opts: Required<EngineOptions>
+  readonly opts: ResolvedEngineOptions
   readonly pool: Map<string, PoolRecord>
   readonly acquireQueue: Map<string, Promise<PoolRecord>>
 }
 
 /** Build the ssh2 connect config for one entry (key read from disk). */
-export function buildConnectConfig(entry: SshHostEntry, sock: ConnectConfig['sock'] | undefined, opts: Required<EngineOptions>): ConnectConfig {
+export function buildConnectConfig(entry: SshHostEntry, sock: ConnectConfig['sock'] | undefined, opts: ResolvedEngineOptions): ConnectConfig {
   const config: ConnectConfig = {
     host: entry.host,
     port: entry.port,

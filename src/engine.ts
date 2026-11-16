@@ -16,6 +16,7 @@ import {
   type EngineOptions,
   type KeyboardInteractiveHandler,
   type PoolRecord,
+  type ResolvedEngineOptions,
 } from './engine/connection-pool.ts'
 import { openShell, type ShellSession } from './engine/pty.ts'
 import { download, ls, upload } from './engine/sftp.ts'
@@ -33,7 +34,7 @@ export type { TunnelRecord } from './engine/tunnel.ts'
  */
 export class SshEngine {
   readonly store: HostStore
-  readonly opts: Required<EngineOptions>
+  readonly opts: ResolvedEngineOptions
   readonly pool = new Map<string, PoolRecord>()
   readonly acquireQueue = new Map<string, Promise<PoolRecord>>()
   readonly tunnels = new Map<string, TunnelRecord>()
