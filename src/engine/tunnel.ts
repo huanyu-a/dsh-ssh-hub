@@ -7,6 +7,7 @@
 import { createServer, type Server as NetServer, type Socket } from 'node:net'
 import type { TunnelInfo } from '../protocol.ts'
 import { acquire, disposeRecord, endRecordChain, type PoolEngine, type PoolRecord } from './connection-pool.ts'
+import { readForwardsConf } from './tunnel-discovery.ts'
 
 /** One active tunnel record (server + pinned connection + live sockets). */
 export interface TunnelRecord {
@@ -46,7 +47,7 @@ function abortTunnel(engine: TunnelEngine, id: string): void {
 export async function startTunnel(
   engine: TunnelEngine,
   alias: string,
-  options: { remotePort: number; remoteHost?: string; localPort?: number },
+  options: { remotePort: number; remoteHost?: string; localPort?: number; name?: string; description?: string },
 ): Promise<TunnelInfo> {
   if (!Number.isInteger(options.remotePort) || options.remotePort < 1 || options.remotePort > 65535) {
     throw new Error('remotePort must be an integer in 1..65535')
@@ -67,6 +68,8 @@ export async function startTunnel(
     remotePort: options.remotePort,
     state: 'connecting',
     startedAt: Date.now(),
+    name: options.name,
+    description: options.description,
   }
   // Reuse the live pooled connection when one exists so sibling tunnels on
   // one alias multiplex over it (and no orphaned connection leaks); recycle
@@ -154,7 +157,15 @@ export async function startTunnel(
 
 /** All active tunnels. */
 export function listTunnels(engine: TunnelEngine): TunnelInfo[] {
-  return [...engine.tunnels.values()].map(tunnel => ({ ...tunnel.info }))
+  const forwardsMap = readForwardsConf()
+  return [...engine.tunnels.values()].map(tunnel => {
+    const conf = forwardsMap.get(tunnel.info.localPort)
+    return {
+      ...tunnel.info,
+      name: tunnel.info.name ?? conf?.name,
+      description: tunnel.info.description ?? conf?.description,
+    }
+  })
 }
 
 /** Stop one tunnel (closes the listener, live sockets, and the pinned connection). */

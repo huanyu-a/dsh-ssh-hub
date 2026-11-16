@@ -441,7 +441,7 @@ export class HostStore {
         // A host that is already stored can still be wrong: it may predate
         // multi-key support (one key of two) or the `none` method. Add-only
         // import called those "existing" and left them broken forever.
-        if (this.reconcileExisting(existing, identityFiles, prefersNoneOnly)) updated += 1
+        if (this.reconcileExisting(existing, identityFiles, prefersNoneOnly, block.props.description)) updated += 1
         else skip(pattern, 'existing')
         continue
       }
@@ -529,6 +529,7 @@ export class HostStore {
             : prefersNone(block.props.preferredauthentications)
               ? 'none'
               : 'password',
+        description: block.props.description,
       })
     }
     return out
@@ -537,51 +538,69 @@ export class HostStore {
   /**
    * Correct an already-stored host from its ssh_config block.
    *
-   * Only the two shapes that silently break a working `ssh <alias>` are
-   * repaired, and only when the stored value is strictly missing information —
-   * never to undo a deliberate user edit:
-   *   1. a key host that the config gives more candidate keys than it stores;
-   *   2. a host that stores `password` with no password while the config asks
+   * Only the shapes that silently break a working `ssh <alias>` or strictly
+   * missing documentation are repaired, and only when the stored value is strictly
+   * missing information — never to undo a deliberate user edit:
+   *   1. a host with no description when the config provides one;
+   *   2. a key host that the config gives more candidate keys than it stores;
+   *   3. a host that stores `password` with no password while the config asks
    *      for the `none` method.
    * @param existing - the stored entry.
    * @param identityFiles - every IdentityFile from the block, in order.
    * @param prefersNone - whether the block asks for the `none` method.
+   * @param description - optional description from the config block.
    * @returns true when the entry was changed.
    */
-  private reconcileExisting(existing: SshHostEntry, identityFiles: string[], prefersNone: boolean): boolean {
-    if (existing.auth.kind === 'none') return false
+  private reconcileExisting(
+    existing: SshHostEntry,
+    identityFiles: string[],
+    prefersNone: boolean,
+    description?: string,
+  ): boolean {
+    let changed = false
+    if ((existing.description === undefined || existing.description === '') && description !== undefined && description !== '') {
+      try {
+        this.update(existing.alias, { description })
+        changed = true
+      } catch {
+        // best effort
+      }
+    }
     if (existing.auth.kind === 'password'
       && prefersNone
       && (existing.auth.password === undefined || existing.auth.password === '')) {
       try {
         this.update(existing.alias, { auth: { kind: 'none' } })
-        return true
+        changed = true
       } catch {
-        return false
+        // best effort
       }
     }
-    if (existing.auth.kind !== 'key' || identityFiles.length === 0) return false
-    const stored = keyCandidates(existing)
-    const missing = identityFiles.filter(path => !stored.includes(path))
-    if (missing.length === 0) return false
-    // Config order wins: OpenSSH tries the file list top-down.
-    const merged: string[] = []
-    for (const path of [...identityFiles, ...stored]) {
-      if (!merged.includes(path)) merged.push(path)
+    if (existing.auth.kind === 'key' && identityFiles.length > 0) {
+      const stored = keyCandidates(existing)
+      const missing = identityFiles.filter(path => !stored.includes(path))
+      if (missing.length > 0) {
+        // Config order wins: OpenSSH tries the file list top-down.
+        const merged: string[] = []
+        for (const path of [...identityFiles, ...stored]) {
+          if (!merged.includes(path)) merged.push(path)
+        }
+        try {
+          this.update(existing.alias, {
+            auth: {
+              kind: 'key',
+              keyPath: merged[0],
+              keyPaths: merged,
+              passphrase: existing.auth.passphrase,
+            },
+          })
+          changed = true
+        } catch {
+          // best effort
+        }
+      }
     }
-    try {
-      this.update(existing.alias, {
-        auth: {
-          kind: 'key',
-          keyPath: merged[0],
-          keyPaths: merged,
-          passphrase: existing.auth.passphrase,
-        },
-      })
-      return true
-    } catch {
-      return false
-    }
+    return changed
   }
 
   private skippedBlocks: ImportSkipBlock[] = []

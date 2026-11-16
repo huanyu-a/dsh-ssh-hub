@@ -163,6 +163,10 @@ export interface TunnelInfo {
   live?: boolean
   /** The ssh option that created it ('-L', '-R' or '-D'), external forwards only. */
   kind?: 'local' | 'remote' | 'dynamic'
+  /** Project or service name (e.g. from forwards.conf or user remark). */
+  name?: string
+  /** Remarks / note about what project or service this tunnel serves. */
+  description?: string
 }
 
 /**
@@ -180,6 +184,8 @@ export interface LocalConfigHost {
   auth: SshAuthKind
   /** True when the block cannot be imported as-is (wildcard / Match). */
   skippedReason?: ImportSkipReason
+  /** Host description (e.g. from comments preceding the Host block). */
+  description?: string
 }
 
 /** One directory listing entry (remote file browser). */

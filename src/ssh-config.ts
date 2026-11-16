@@ -138,17 +138,33 @@ export function readSshConfigBlocks(configPath: string): SshConfigRead {
   const skipped: ImportSkipBlock[] = []
   const lines = readLines(configPath, dirname(configPath), new Set<string>(), 0)
   let current: SshBlock | undefined
+  let pendingComments: string[] = []
   for (const raw of lines) {
-    const match = LINE_RE.exec(raw.trim())
+    const trimmed = raw.trim()
+    if (trimmed.startsWith('#')) {
+      const commentText = trimmed.replace(/^#+\s*/, '').trim()
+      if (commentText !== '') pendingComments.push(commentText)
+      continue
+    }
+    if (trimmed === '') {
+      pendingComments = []
+      continue
+    }
+    const match = LINE_RE.exec(trimmed)
     if (match === null) continue
     const key = match[1].toLowerCase()
     const value = match[2].trim()
     if (key === 'host') {
       current = { pattern: value, props: {}, repeated: {} }
+      if (pendingComments.length > 0) {
+        current.props.description = pendingComments.join('; ')
+        pendingComments = []
+      }
       blocks.push(current)
       continue
     }
     if (key === 'match') {
+      pendingComments = []
       // Everything below a Match line is conditional; attributing it to the
       // Host block above would import a wrong HostName / ProxyCommand.
       skipped.push({ name: 'Match ' + value, reason: 'match' })

@@ -448,7 +448,7 @@ export class SshApi {
     return body.tunnels
   }
 
-  async startTunnel(options: { alias: string; remotePort: number; remoteHost?: string; localPort?: number }): Promise<TunnelInfo> {
+  async startTunnel(options: { alias: string; remotePort: number; remoteHost?: string; localPort?: number; name?: string; description?: string }): Promise<TunnelInfo> {
     const response = await fetch(SSH_API.tunnel, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

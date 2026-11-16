@@ -121,7 +121,9 @@ export function HostFormDialog({ api, editing, onClose, onSaved }: HostFormDialo
         ? { kind: 'password', password: form.password }
         : form.authKind === 'key'
           ? { kind: 'key', keyPath: form.keyPath.trim(), passphrase: form.passphrase === '' ? undefined : form.passphrase }
-          : { kind: 'agent', agentPath: form.agentPath.trim() === '' ? undefined : form.agentPath.trim() }
+          : form.authKind === 'none'
+            ? { kind: 'none' }
+            : { kind: 'agent', agentPath: form.agentPath.trim() === '' ? undefined : form.agentPath.trim() }
     const payload: HostPayload = {
       host,
       port,
@@ -202,6 +204,10 @@ export function HostFormDialog({ api, editing, onClose, onSaved }: HostFormDialo
               <input type="radio" name="dsh-ssh-auth" checked={form.authKind === 'agent'} onChange={() => { set('authKind', 'agent') }} />
               {tt('form.auth.agent')}
             </label>
+            <label className={css.radioLabel}>
+              <input type="radio" name="dsh-ssh-auth" checked={form.authKind === 'none'} onChange={() => { set('authKind', 'none') }} />
+              {tt('form.auth.none')}
+            </label>
           </div>
           {editing != null && <span className={css.hint}>{tt('form.authKeepHint')}</span>}
         </div>
@@ -223,6 +229,8 @@ export function HostFormDialog({ api, editing, onClose, onSaved }: HostFormDialo
             <input className={css.input} value={form.agentPath} onChange={event => { set('agentPath', event.target.value) }} />
             <span className={css.hint}>{tt('form.agentPathHint')}</span>
           </label>
+        ) : form.authKind === 'none' ? (
+          <span className={css.hint}>{tt('form.auth.noneHint')}</span>
         ) : (
           <label className={css.field}>
             <span className={css.fieldLabel}>{tt('form.password')}</span>

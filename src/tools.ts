@@ -96,7 +96,9 @@ function renderTunnel(tunnel: TunnelInfo): string {
   const owner = tunnel.source === 'external'
     ? ` [external pid ${String(tunnel.pid ?? 0)}${tunnel.live === true ? ', port accepting' : ', port NOT listening'}]`
     : ' [plugin]'
-  return `${tunnel.id} ${tunnel.alias} 127.0.0.1:${tunnel.localPort} -> ${tunnel.remoteHost}:${tunnel.remotePort} [${tunnel.state}]${owner}`
+  const meta = [tunnel.name, tunnel.description].filter(Boolean).join(' - ')
+  const extra = meta ? ` [${meta}]` : ''
+  return `${tunnel.id} ${tunnel.alias} 127.0.0.1:${tunnel.localPort} -> ${tunnel.remoteHost}:${tunnel.remotePort} [${tunnel.state}]${owner}${extra}`
 }
 
 /** The host-list tool. */
@@ -330,6 +332,8 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
       remotePort: { type: 'integer', description: 'Port on the remote side (required for start).' },
       remoteHost: { type: 'string', description: 'Remote host to forward to (default 127.0.0.1 — the server itself).' },
       localPort: { type: 'integer', description: 'Local listening port (default: auto-assigned).' },
+      name: { type: 'string', description: 'Optional project or service name for this tunnel (e.g. redis, api).' },
+      description: { type: 'string', description: 'Optional remark or purpose for this tunnel.' },
       tunnelId: { type: 'string', description: 'Tunnel id (required for stop).' },
     },
     output: {
@@ -350,6 +354,8 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
               state: { type: 'string', enum: ['forwarding', 'connecting', 'failed'], required: true },
               error: { type: 'string' },
               startedAt: { type: 'integer', required: true },
+              name: { type: 'string' },
+              description: { type: 'string' },
             },
           },
           tunnels: {
@@ -370,6 +376,8 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
                 pid: { type: 'integer' },
                 live: { type: 'boolean' },
                 kind: { type: 'string', enum: ['local', 'remote', 'dynamic'] },
+                name: { type: 'string' },
+                description: { type: 'string' },
               },
             },
           },
@@ -405,6 +413,8 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
             remotePort: args.remotePort,
             remoteHost: args.remoteHost,
             localPort: args.localPort,
+            name: args.name,
+            description: args.description,
           })
           audit?.record('tunnel.start', {
             ok: true,

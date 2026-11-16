@@ -13,7 +13,7 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { HostStore, keyCandidates, prefersNone } from '../src/store.ts'
-import { parseForwardSpec, parseSshArguments, splitCommandLine } from '../src/engine/tunnel-discovery.ts'
+import { parseForwardSpec, parseSshArguments, readForwardsConf, splitCommandLine } from '../src/engine/tunnel-discovery.ts'
 
 /** Build a store whose ssh_config is a fresh temp file with `text`. */
 function storeWithConfig(text: string): HostStore {
@@ -250,5 +250,62 @@ describe('forward discovery', () => {
   it('does not mistake an option value for the destination', () => {
     const args = splitCommandLine('ssh -o ConnectTimeout=10 -p 2222 -i ~/.ssh/id_ed25519 user@host')
     expect(parseSshArguments(args).destination).toBe('user@host')
+  })
+
+  it('extracts preceding comments as host description', () => {
+    const store = storeWithConfig([
+      '# production web cluster primary',
+      'Host prod-web',
+      '    HostName 10.0.0.1',
+      '    User admin',
+      '    IdentityFile ~/.ssh/id_rsa',
+      '',
+    ].join('\n'))
+    store.importFromSshConfig()
+    const entry = store.find('prod-web')
+    expect(entry?.description).toBe('production web cluster primary')
+  })
+
+  it('reconciles empty description on existing host when config has comments', () => {
+    const store = storeWithConfig([
+      '# my cloud box',
+      'Host existing-box',
+      '    HostName 10.0.0.2',
+      '    User ubuntu',
+      '    IdentityFile ~/.ssh/id_rsa',
+    ].join('\n'))
+    store.create({
+      alias: 'existing-box',
+      host: '10.0.0.2',
+      user: 'ubuntu',
+      auth: { kind: 'key', keyPath: '~/.ssh/id_rsa' },
+    })
+    expect(store.find('existing-box')?.description).toBeUndefined()
+    store.importFromSshConfig()
+    expect(store.find('existing-box')?.description).toBe('my cloud box')
+  })
+
+  it('parses ~/.ssh/forwards.conf correctly', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-forwards-'))
+    const conf = join(dir, 'forwards.conf')
+    writeFileSync(conf, [
+      '# comment line',
+      'workbuddy-api      7863   127.0.0.1:7863    WorkBuddy Manager API (workbuddy2api)',
+      'magpie-web         13430  127.0.0.1:3430    服务器 Magpie Web 页面',
+    ].join('\n'), 'utf8')
+    const map = readForwardsConf(conf)
+    expect(map.size).toBe(2)
+    expect(map.get(7863)).toEqual({
+      name: 'workbuddy-api',
+      localPort: 7863,
+      remoteTarget: '127.0.0.1:7863',
+      description: 'WorkBuddy Manager API (workbuddy2api)',
+    })
+    expect(map.get(13430)).toEqual({
+      name: 'magpie-web',
+      localPort: 13430,
+      remoteTarget: '127.0.0.1:3430',
+      description: '服务器 Magpie Web 页面',
+    })
   })
 })

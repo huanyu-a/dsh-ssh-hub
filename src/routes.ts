@@ -735,6 +735,8 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
               remotePort,
               remoteHost: typeof body?.remoteHost === 'string' && body.remoteHost !== '' ? body.remoteHost : undefined,
               localPort: typeof body?.localPort === 'number' ? body.localPort : undefined,
+              name: typeof body?.name === 'string' && body.name.trim() !== '' ? body.name.trim() : undefined,
+              description: typeof body?.description === 'string' && body.description.trim() !== '' ? body.description.trim() : undefined,
             })
             writeJson(res, 200, { tunnel })
           } catch (error) {

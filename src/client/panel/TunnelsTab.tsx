@@ -28,7 +28,8 @@ export function diffTunnels(prev: TunnelInfo[] | null, next: TunnelInfo[]): Tunn
       || a.localPort !== b.localPort || a.remoteHost !== b.remoteHost
       || a.remotePort !== b.remotePort || a.startedAt !== b.startedAt
       || a.error !== b.error || a.source !== b.source || a.pid !== b.pid
-      || a.live !== b.live || a.kind !== b.kind) {
+      || a.live !== b.live || a.kind !== b.kind
+      || a.name !== b.name || a.description !== b.description) {
       return next
     }
   }
@@ -63,6 +64,7 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
   const [remotePort, setRemotePort] = useState('')
   const [remoteHost, setRemoteHost] = useState('')
   const [localPort, setLocalPort] = useState('')
+  const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
 
   // Hosts for the new-tunnel form (failure does not block tunnel listing).
@@ -195,11 +197,13 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
         remotePort: remotePortNumber,
         remoteHost: remoteHost.trim() === '' ? undefined : remoteHost.trim(),
         localPort: localPortNumber,
+        name: name.trim() === '' ? undefined : name.trim(),
       })
       setNotice(tt('tunnel.started', { localPort: tunnel.localPort }))
       setRemotePort('')
       setRemoteHost('')
       setLocalPort('')
+      setName('')
       await refresh()
     } catch (cause) {
       setError(tt('tunnel.failed', { error: errorMessage(cause) }))
@@ -235,17 +239,26 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
             data-state={tunnel.state}
             data-source={tunnel.source ?? 'plugin'}
           >
-            <span className={css.tunnelLabel}>
-              {tunnel.source === 'external'
-                ? tt('tunnel.externalRow', {
-                  alias: tunnel.alias,
-                  localPort: tunnel.localPort,
-                  remoteHost: tunnel.remoteHost,
-                  remotePort: tunnel.remotePort,
-                  pid: tunnel.pid ?? 0,
-                })
-                : tt('tunnel.row', { alias: tunnel.alias, localPort: tunnel.localPort, remoteHost: tunnel.remoteHost, remotePort: tunnel.remotePort })}
-            </span>
+            <div className={css.tunnelInfo}>
+              <div className={css.tunnelHeaderLine}>
+                {tunnel.name !== undefined && tunnel.name !== '' && (
+                  <span className={css.tunnelName}>{tunnel.name}</span>
+                )}
+                <span className={css.tunnelEndpoint}>
+                  {tunnel.alias}: 127.0.0.1:{tunnel.localPort} -&gt; {tunnel.remoteHost}:{tunnel.remotePort}
+                </span>
+              </div>
+              {(Boolean(tunnel.description) || tunnel.source === 'external') && (
+                <div className={css.tunnelMetaLine}>
+                  {tunnel.description !== undefined && tunnel.description !== '' && (
+                    <span className={css.tunnelDesc}>{tunnel.description}</span>
+                  )}
+                  {tunnel.source === 'external' && (
+                    <span className={css.tunnelPid}>{tt('tunnel.externalMeta', { pid: tunnel.pid ?? 0 })}</span>
+                  )}
+                </div>
+              )}
+            </div>
             {tunnel.source === 'external'
               ? (
                 <span className={css.tunnelState} data-live={tunnel.live === true ? 'true' : 'false'}>
@@ -278,6 +291,10 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
           <label className={css.field}>
             <span className={css.fieldLabel}>{tt('tunnel.localPort')}</span>
             <input className={css.input} type="number" min={1} max={65535} value={localPort} placeholder={tt('tunnel.localPortHint')} onChange={event => { setLocalPort(event.target.value) }} />
+          </label>
+          <label className={css.field}>
+            <span className={css.fieldLabel}>{tt('tunnel.name')}</span>
+            <input className={css.input} value={name} placeholder={tt('tunnel.nameHint')} onChange={event => { setName(event.target.value) }} />
           </label>
         </div>
         <div>

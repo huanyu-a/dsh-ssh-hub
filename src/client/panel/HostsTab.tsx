@@ -235,7 +235,7 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
             </span>
           </div>
         </td>
-        <td><span className={css.badge} data-kind={host.auth}>{host.auth === 'key' ? tt('form.auth.key') : host.auth === 'password' ? tt('form.auth.password') : tt('form.auth.agent')}</span></td>
+        <td><span className={css.badge} data-kind={host.auth}>{host.auth === 'key' ? tt('form.auth.key') : host.auth === 'password' ? tt('form.auth.password') : host.auth === 'none' ? tt('form.auth.none') : tt('form.auth.agent')}</span></td>
         {visibleColumns.environment && <td className={css.cellMuted}>{host.environment ?? ''}</td>}
         {visibleColumns.tags && (
           <td>

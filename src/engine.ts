@@ -133,7 +133,7 @@ export class SshEngine {
   // ------------------------------------------------------------- tunnel
 
   /** Start a local port-forward tunnel (listens on 127.0.0.1 only). */
-  async startTunnel(alias: string, options: { remotePort: number; remoteHost?: string; localPort?: number }): Promise<TunnelInfo> {
+  async startTunnel(alias: string, options: { remotePort: number; remoteHost?: string; localPort?: number; name?: string; description?: string }): Promise<TunnelInfo> {
     return startTunnel(this, alias, options)
   }
 

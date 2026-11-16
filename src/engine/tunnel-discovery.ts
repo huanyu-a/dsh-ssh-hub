@@ -14,7 +14,10 @@
  */
 
 import { execFile } from 'node:child_process'
+import { existsSync, readFileSync } from 'node:fs'
 import { connect } from 'node:net'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { TunnelInfo } from '../protocol.ts'
 
 /** How long a process scan is reused. The tab polls every 5s; spawning a
@@ -257,6 +260,45 @@ export function resetTunnelScanCache(): void {
   scanCache = undefined
 }
 
+/** One record from ~/.ssh/forwards.conf. */
+export interface ForwardConfEntry {
+  name: string
+  localPort: number
+  remoteTarget: string
+  description: string
+}
+
+/**
+ * Parse ~/.ssh/forwards.conf for project names and descriptions.
+ * The user's forwards.conf is the authoritative registry of tunnels on the machine.
+ */
+export function readForwardsConf(overridePath?: string): Map<number, ForwardConfEntry> {
+  const map = new Map<number, ForwardConfEntry>()
+  const home = process.env.USERPROFILE ?? homedir()
+  const confPath = overridePath ?? join(home, '.ssh', 'forwards.conf')
+  if (!existsSync(confPath)) return map
+  try {
+    const content = readFileSync(confPath, 'utf8')
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim()
+      if (line === '' || line.startsWith('#')) continue
+      const parts = line.split(/\s+/)
+      if (parts.length >= 2) {
+        const name = parts[0]
+        const port = Number.parseInt(parts[1], 10)
+        if (Number.isInteger(port)) {
+          const remoteTarget = parts[2] ?? ''
+          const description = parts.slice(3).join(' ')
+          map.set(port, { name, localPort: port, remoteTarget, description })
+        }
+      }
+    }
+  } catch {
+    // best-effort
+  }
+  return map
+}
+
 /**
  * Port forwards that exist on this machine but are not owned by this plugin.
  *
@@ -264,9 +306,13 @@ export function resetTunnelScanCache(): void {
  * declared by a running process, and hiding it would make a half-broken tunnel
  * look absent rather than broken.
  * @param owned - local ports the plugin already reports, to avoid duplicates.
+ * @param customRemarks - optional stored user remarks keyed by port or tunnel id.
  * @returns external forwards in process order.
  */
-export async function discoverExternalTunnels(owned: TunnelInfo[]): Promise<TunnelInfo[]> {
+export async function discoverExternalTunnels(
+  owned: TunnelInfo[],
+  customRemarks?: Record<string, { name?: string; description?: string }>,
+): Promise<TunnelInfo[]> {
   let scanned: ScannedProcess[]
   try {
     scanned = await scanSshProcesses()
@@ -275,10 +321,14 @@ export async function discoverExternalTunnels(owned: TunnelInfo[]): Promise<Tunn
   }
   const ownedPorts = new Set(owned.map(tunnel => tunnel.localPort))
   const found: TunnelInfo[] = []
+  const forwardsMap = readForwardsConf()
+
   for (const process of scanned) {
     for (const [index, forward] of process.forwards.entries()) {
       if (forward.kind === 'remote') continue
       if (ownedPorts.has(forward.localPort)) continue
+      const conf = forwardsMap.get(forward.localPort)
+      const remark = customRemarks?.[String(forward.localPort)]
       found.push({
         id: `ext-${String(process.pid)}-${String(index)}`,
         alias: process.destination !== '' ? process.destination : `pid ${String(process.pid)}`,
@@ -290,6 +340,8 @@ export async function discoverExternalTunnels(owned: TunnelInfo[]): Promise<Tunn
         source: 'external',
         pid: process.pid,
         kind: forward.kind,
+        name: remark?.name ?? conf?.name,
+        description: remark?.description ?? conf?.description,
       })
     }
   }
