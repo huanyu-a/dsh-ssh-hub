@@ -288,6 +288,53 @@ if (bundleText.includes(`id: "${pkgName}"`) === false) {
   fail(`the bundle does not register under the package name ${pkgName}`)
 }
 
+// --- 3c. the panel's visual contract survived bundling --------------------
+// CSS modules rename every class, so a typo between the stylesheet and the
+// component does not fail the build — it silently drops the rule and the
+// element renders unstyled. These checks read the shipped mapping and the
+// shipped rules, which is the only place both halves meet.
+const UI_CLASSES = [
+  // the machine identity block (the panel's signature element)
+  'hostIdentity', 'hostAlias', 'hostEndpoint',
+  // row affordances
+  'hostsTable', 'tagList', 'tag', 'actions', 'actionLinks', 'actionLink', 'connectButton',
+]
+for (const name of UI_CLASSES) {
+  if (!bundleText.includes(`"${name}": "${name}_`)) {
+    fail(`the CSS-module mapping has no entry for ${name} — the component would reference an undefined class and render unstyled`)
+  }
+  if (!bundleText.includes(`.${name}_`)) {
+    fail(`the shipped stylesheet has no rule for .${name} — the class is mapped but styles nothing`)
+  }
+}
+pass(`all ${String(UI_CLASSES.length)} panel classes are both mapped and styled in the bundle`)
+
+// The host table must carry the generic grid class AND its own modifier: the
+// state rail and the pinned action column are scoped to the modifier so the
+// other tabs' result tables do not inherit them.
+if (!bundleText.includes('panel_default.hostsTable')) {
+  fail('the host table does not apply the hostsTable modifier, so it would lose the state rail and the pinned action column')
+}
+pass('the host table applies its own modifier alongside the shared grid class')
+
+// Accessibility floor: a visible keyboard focus ring and respect for the
+// system's reduced-motion setting. Both are easy to lose in a restyle.
+for (const rule of ['focus-visible', 'prefers-reduced-motion']) {
+  if (!bundleText.includes(rule)) {
+    fail(`the shipped stylesheet lost its ${rule} rule`)
+  }
+}
+pass('the stylesheet keeps a keyboard focus ring and honours reduced motion')
+
+// The compact row copy: the full sentences are still used for tooltips, but a
+// row that renders the long form pushes the actions off the row.
+const ROW_COPY = ['hosts.testOkShort', 'hosts.testFailShort', 'hosts.testingShort']
+const missingCopy = ROW_COPY.filter(key => !bundleText.includes(key))
+if (missingCopy.length > 0) {
+  fail(`the bundle is missing compact row copy: ${missingCopy.join(', ')}`)
+}
+pass('the compact row copy keys are present in the bundle')
+
 // --- 4. it disposes cleanly ---------------------------------------------
 for (const dispose of effects) {
   if (typeof dispose === 'function') dispose()

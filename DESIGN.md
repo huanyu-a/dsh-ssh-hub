@@ -177,6 +177,7 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | P3-d | 跨机日志检索页签 | 关键字 + journal/files + 时间窗；结果按检索→主机聚合；检索记录落盘 | ✅ 已交付 |
 | P3-e | 告警到会话 | 告警摘要进系统提示词：几台在报警、哪条规则、什么值；**循环未启动时明说「这个『无』不代表健康」** | ✅ 11 测试 |
 | P3-f | >50 台背压 | 巡检按固定 8 worker 池跨主机并发（原来是串行，50 台 × N 项会跑过自己的监控间隔）；结果按「目标序 → 检查项序」重排，避免完成顺序污染 diff | ✅ 7 测试 |
+| P3-g | 面板视觉与版式 | 见下节「界面设计」；主机表 8 列压到 6 列，工具栏四个控件统一 30px 高，破坏性操作与主操作分层 | ✅ 4 项客户端产物断言 |
 
 > **当前版本的已知边界**：
 > - 监控循环**默认关闭**（`monitorEnabled: false`）。一个插件刚加载就去探测机群的定时器
@@ -194,6 +195,40 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 > - **密文但无密钥时必须诚实失败**：`decryptEntry` 会丢弃打不开的信封而不是把它当口令交给 ssh2，
 >   连接层则报「no password stored … encrypted and the master key is not available」。
 >   原来的表现是 ssh2 的 "All configured authentication methods failed"，让人去查服务器而不是查密钥。
+
+### 3.1 界面设计（P3-g）
+
+**方向：运维控制台，不是网页。** 使用者是一个常驻终端的单人运维，面板的唯一任务是
+「一眼看清这些机器，并对某一台动手」。所以克制信息噪音、按机器语言排版、只留一个强调色；
+配色全部走 `--dsw-alias-*` 令牌，明暗主题与皮肤自动跟随，不引入任何私有色值。
+
+**签名元素：机器身份块。** 每个主机渲染成两行 —— 上排 `alias`，下排 `user@host:port`
+（等宽、`tabular-nums`）。这正是使用者在 `~/.ssh/config` 里已经习惯的写法，把原来平铺的
+别名 / 地址 / 用户三列合成一个可读单元，同时把表格宽度让给真正会变化的列。
+
+**改了什么，为什么：**
+
+| 问题 | 做法 |
+|---|---|
+| 8 个平级列，没有视觉入口；「备注」常年为空仍占一列 | 合成 6 列：身份块 / 认证 / 环境 / 标签 / 备注 / 操作 |
+| 4 个同色文字链接，「删除」和「测试」看起来一样危险 | 一个主操作（连接，实心按钮）+ 三个弱化文字链接；`删除` 只在 hover 时转危险色 |
+| 工具栏控件高度不一（搜索框 6px、按钮 5px 内边距），基线参差 | 全部固定 30px + `box-sizing`，实测四个控件顶边同为 105px |
+| 带边框的胶囊徽章让最不重要的单元成为整行最响的东西 | 改为「状态点 + 文字」，`currentColor` 承载颜色，边框归零 |
+| 所有单元格 `vertical-align: top`，矮单元格在高行里悬空 | `middle` |
+| 无法感知主机是否连得通 | 行首 2px 状态轨：绿=上次测试通过、红=失败、蓝=测试中、**无色=没测过**（「没测过」≠「健康」） |
+| 窄面板下表格横向滚动，「连接」被推出视野 | 操作列 `position: sticky; right: 0`，任何宽度下主操作都可达（实测 760px 面板下别名与按钮同时可见） |
+| 页签是 8 个方框 | 下划线段落式；下划线用伪元素落在栏线本身，不与可点区域等宽 |
+
+**可访问性下限**：`:focus-visible` 统一焦点环（鼠标点击不留痕）；`prefers-reduced-motion`
+下关闭全部过渡与脉冲动画；状态同时用颜色**和**文字表达，不单靠色相。
+
+**改动边界**：状态轨与固定列挂在 `.hostsTable` 修饰类上，`.table` 保持通用 —— 其它页签
+的结果表格不继承这两条规则（已用一份纯 `.table` 探针断言：`border-left: 0`、
+`position: static`、无阴影）。
+
+**验证**：`scripts/verify-client.mjs` 断言 10 个类名在产物里**既被映射又有规则**（CSS Modules
+会在类名打错时静默丢规则，构建不会失败）、主机表同时带通用类与修饰类、焦点环与 reduced-motion
+规则仍在、三个短版行内文案键存在。版式另用真实源样式做了明/暗两套静态预览并逐项核对计算样式。
 
 ---
 
@@ -249,7 +284,10 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | `scripts/verify-monitor.mjs`、`scripts/verify-ssh2-import.mjs` | 全新 | 装好后对**运行中的插件**做端到端验收，并独立证明 CJS 导入形式可用 |
 | `scripts/verify-routes.mjs` | 全新：发布 / 日志检索 / 主密钥三条链路的端到端验收，含「加密后凭据不再明文」「轮换后仍可认证」「无回滚命令被拒」 | P2-a / P2-b / P3-b |
 | `scripts/audit-store.mjs` | 全新：审计凭据库的密文/明文/孤儿密文分布 | P3-b 数据安全检查 |
-| `scripts/verify-client.mjs` | 加「8 个页签标签键都在产物里」的断言 | 客户端漏构建的回归 |
+| `scripts/verify-client.mjs` | 加「8 个页签标签键都在产物里」的断言；再加 4 组界面契约断言（类名映射+规则、修饰类、焦点环与 reduced-motion、短版文案） | 客户端漏构建；CSS Modules 类名打错不会让构建失败 |
+| `src/client/panel/HostsTab.tsx` | 主机行改为「机器身份块」：别名 + `user@host:port` 两行；列从 8 压到 6；标签逐个成 chip；行首按测试结果给 `data-state`；操作区拆成「主按钮 + 弱化链接」 | P3-g |
+| `src/client/panel/panel.module.css` | 框架 padding 归位到 `panelContent`；页签改下划线段落；工具栏控件统一 30px；徽章去边框改状态点；新增 `.hostIdentity` / `.hostsTable` / `.tag` / `.connectButton` / `.actionLink`；焦点环 + reduced-motion | P3-g |
+| `src/client/locales.ts` | 加三个短版行内文案（`hosts.testOkShort` / `testFailShort` / `testingShort`），长句保留给 tooltip | P3-g |
 
 > 面板不再"未改动"：在原五个页签之后新增「机群 / 发布 / 日志」三个页签（P1-f、P3-c、P3-d）。
 > 新能力的路由与页签都只在本机回环地址应答，非回环请求返回 403。
@@ -263,11 +301,12 @@ SFTP、端口转发、并发集群执行、6 个 agent 工具。
 | 单元 | vitest：known_hosts 解析、脱敏规则、告警状态机、部署状态机、日志命令构造与解析、指标分级与滚动聚合、监控循环、主密钥读写/轮换/回滚/明文巡检、活动记录保留与坏行容忍、巡检背压与定序、页签表完整性 | ✅ 270 测试 / 18 文件全绿 |
 | 类型 | `tsc --noEmit`（strict）+ `tsc -p tsconfig.build.json` | ✅ 通过 |
 | 契约 | 每个工具必须有 `output: { schema, render }`（缺失会让 cordis 回滚整个 entry，症状是「路由全 401」） | ✅ 15 个工具全部注册 |
-| 打包 | `npm pack` 后解包逐文件比对 SHA-256，并断言 `exports`/`main`/`types` 声明的每个路径都在 tarball 里 | ✅ 64 个文件与磁盘一致 |
+| 打包 | `npm pack` 后解包逐文件比对 SHA-256，并断言 `exports`/`main`/`types` 声明的每个路径都在 tarball 里 | ✅ 65 个文件与磁盘一致 |
 | 运行时 | 装进 desktop profile → `cordis_inspect` 查 Tool 清单与 Slot 树 | ✅ 15 个工具在册；`sidebar.panellist` 有 `ssh` 且 `main` 有同 key 页（两席一致才不空白）；11 条新路由全部 200 |
 | 真机 SSH | 内嵌 ssh2 Server（真实密钥交换/口令认证/exec）跑 connect/auth/exec/连接池复用/集群顺序/8 项巡检/指纹三策略 | ✅ 11 测试 |
 | CJS 导入 | `scripts/verify-ssh2-import.mjs` 在真实 node 进程里构造 Client、连接、执行 | ✅ 通过（vitest 的 CJS 互操作无法证明这一点，所以单独验证） |
 | 端到端（监控） | `scripts/verify-monitor.mjs`：起假 SSH server → 经插件自己的 API 注册主机 → 触发一轮 → 回读巡检/指标/告警/安全态势 | ✅ 通过 |
-| 端到端（变更/密钥） | `scripts/verify-routes.mjs`：假 SSH server → 发布两步 + 健康检查 → 读回历史 → 无回滚命令的计划被拒 → 日志检索 + 读回历史 → 设主密码 → **直接读 store 文件确认口令已非明文** → 轮换后重新认证仍成功 → 有密文时删密钥被拒 → 复原安全态势 | ✅ 13 项断言全过 |
-| 客户端产物 | `scripts/verify-client.mjs`：在 `node:vm` 里用桩页面加载真实 `lib/client.js`，断言注册 id、`inject` 只用运行时确实提供的服务、两个 Slot 都注册、两席 id 一致、8 个页签标签键都在产物里、`apply` 的 effect 可干净释放 | ✅ 7 项断言 |
+| 端到端（变更/密钥） | `scripts/verify-routes.mjs`：假 SSH server → 发布两步 + 健康检查 → 读回历史 → 无回滚命令的计划被拒 → 日志检索 + 读回历史 → 设主密码 → **直接读 store 文件确认口令已非明文** → 轮换后重新认证仍成功 → 有密文时删密钥被拒 → 复原安全态势 | ✅ 14 项断言全过 |
+| 客户端产物 | `scripts/verify-client.mjs`：在 `node:vm` 里用桩页面加载真实 `lib/client.js`，断言注册 id、`inject` 只用运行时确实提供的服务、两个 Slot 都注册、两席 id 一致、8 个页签标签键、10 个界面类名既被映射又有规则、主机表带修饰类、焦点环与 reduced-motion 仍在、短版行内文案键在产物里、`apply` 的 effect 可干净释放 | ✅ 11 项断言 |
+| 界面版式 | 用真实源样式（非产物）搭明/暗两套静态预览，逐项核对计算样式：控件高度与顶边、状态轨颜色、徽章边框、单元格对齐、窄面板下主操作可达性、纯 `.table` 不继承主机表专属规则 | ✅ 四控件同为 30px/顶边 105；轨色 ok/fail/testing/none 正确；760px 下别名与「连接」同时可见 |
 | 数据安全 | `scripts/audit-store.mjs`：列出每台主机的凭据形态（明文/密文/缺失），密文但无密钥时以非零退出码报「孤儿密文」；`scripts/verify-secret-liveness.mjs`：在运行中的插件上验证「无密钥→明文 / 有密钥→密文 / 密钥消失→回到明文」三个转换点 | ✅ 无孤儿密文；三个转换点全部符合预期 |

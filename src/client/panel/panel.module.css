@@ -9,7 +9,13 @@
  * so there is no injected entry row to style either.
  */
 
-/* --- panel frame -------------------------------------------------------------- */
+/* --- panel frame --------------------------------------------------------------
+ *
+ * The panel reads as an operations console, not a web page: one accent, quiet
+ * surfaces, and monospace for anything a machine produces (hostnames, ports,
+ * users, paths). Spacing is on a 4px rhythm so controls line up without
+ * per-component nudging.
+ */
 
 .view {
   height: 100%;
@@ -23,8 +29,10 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  padding: 14px 16px 16px;
-  gap: 10px;
+  /* The frame owns no horizontal padding: the title bar and tab bar run edge
+     to edge like the rest of the shell, and only the content is inset. */
+  padding: 0;
+  gap: 0;
   background: var(--dsw-alias-bg-base);
   color: var(--dsw-alias-label-primary);
   font-family: var(--dsw-font-family);
@@ -35,13 +43,15 @@
   align-items: center;
   gap: 10px;
   flex: none;
+  padding: 12px 16px 10px;
 }
 
 .panelTitle {
   margin: 0;
   flex: 1;
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
   color: var(--dsw-alias-label-primary);
   white-space: nowrap;
 }
@@ -49,39 +59,79 @@
 .backButton {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 5px;
+  /* Quieter than the title: it is an escape hatch, not the subject. */
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-color: transparent;
 }
 
-/* --- tab bar ------------------------------------------------------------------ */
+.backButton:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+}
+
+/* --- tab bar ------------------------------------------------------------------
+ *
+ * Underline segments rather than boxes: a box implies a container the tab does
+ * not have, and eight boxed tabs read as eight buttons. The underline sits on
+ * the bar's own rule, so the active tab is joined to its content.
+ */
 
 .tabBar {
   display: flex;
-  gap: 2px;
+  gap: 0;
   flex: none;
+  padding: 0 16px;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tabBar::-webkit-scrollbar {
+  display: none;
 }
 
 .tab {
-  padding: 7px 14px;
-  font-size: 13px;
+  position: relative;
+  padding: 9px 12px 10px;
+  font-size: 12.5px;
   color: var(--dsw-alias-label-secondary);
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 6px 6px 0 0;
+  border-radius: 0;
   cursor: pointer;
   white-space: nowrap;
+  transition: color 120ms ease;
+}
+
+/* The underline is a pseudo-element so it can be inset from the tab's padding
+   and sit exactly on the bar's rule, instead of a border that spans the whole
+   clickable box. */
+.tab::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
+  transition: background 120ms ease;
 }
 
 .tab:hover {
   color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: transparent;
 }
 
 .tab[data-active] {
   color: var(--dsw-alias-label-primary);
   font-weight: 600;
-  border-bottom-color: var(--dsw-alias-state-business-primary);
+}
+
+.tab[data-active]::after {
+  background: var(--dsw-alias-brand-primary, var(--dsw-alias-state-business-primary));
 }
 
 .panelContent {
@@ -90,6 +140,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  padding: 14px 16px 16px;
 }
 
 /* Scrollable tab body (transfer / tunnels); hosts and cluster use fillBody so
@@ -97,7 +148,7 @@
 .tabBody {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
@@ -106,13 +157,18 @@
 .fillBody {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 
-/* --- toolbar / controls ------------------------------------------------------- */
+/* --- toolbar / controls -------------------------------------------------------
+ *
+ * Every control in a toolbar is exactly 30px tall. Different paddings on a
+ * search box, a select and two buttons is what made the old row look ragged;
+ * a shared height removes the problem instead of aligning it by eye.
+ */
 
 .toolbar {
   display: flex;
@@ -140,15 +196,27 @@
 }
 
 .search {
-  flex: 0 1 260px;
-  min-width: 120px;
-  padding: 6px 10px;
-  font-size: 13px;
+  flex: 1 1 220px;
+  min-width: 140px;
+  max-width: 340px;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  font-size: 12.5px;
   color: var(--dsw-alias-label-primary);
   background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 7px;
   outline: none;
+  transition: border-color 120ms ease;
+}
+
+.search:hover {
+  border-color: var(--dsw-alias-border-l2);
+}
+
+.search:focus {
+  border-color: var(--dsw-alias-brand-primary, var(--dsw-alias-state-business-primary));
 }
 
 .search::placeholder {
@@ -156,13 +224,21 @@
 }
 
 .groupBySelect {
-  padding: 6px 8px;
-  font-size: 13px;
-  color: var(--dsw-alias-label-primary);
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-secondary);
   background: var(--dsw-specific-input-major);
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 7px;
   outline: none;
+  cursor: pointer;
+}
+
+.groupBySelect:hover {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
 }
 
 /* --- host groups (#379) ------------------------------------------------------- */
@@ -230,7 +306,13 @@
   flex: none;
 }
 
-/* --- tables ------------------------------------------------------------------- */
+/* --- tables -------------------------------------------------------------------
+ *
+ * The host table is the panel's subject, so it gets the only raised surface in
+ * the file. Rows are middle-aligned (the old top alignment left short cells
+ * floating in tall rows) and carry a 2px state rail on the left edge: a column
+ * of colour is readable at a glance where a word is not.
+ */
 
 .tableWrap {
   flex: 1;
@@ -238,6 +320,7 @@
   overflow: auto;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .table {
@@ -250,19 +333,31 @@
   position: sticky;
   top: 0;
   z-index: 1;
-  padding: 8px 10px;
+  padding: 9px 12px;
   text-align: left;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-secondary);
+  /* Solid, not translucent: a sticky header over scrolled content must not
+     show the rows through it. */
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
   border-bottom: 1px solid var(--dsw-alias-border-l1);
   white-space: nowrap;
 }
 
 .table td {
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--dsw-alias-separator-primary);
-  vertical-align: top;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--dsw-alias-separator-primary, var(--dsw-alias-border-l1));
+  vertical-align: middle;
+}
+
+/* The rail and the pinned action column belong to the host table alone: other
+   tabs reuse `.table` for plain result grids, where a coloured left edge or a
+   floating last column would mean nothing and would hide content. */
+.hostsTable td:first-child {
+  border-left: 2px solid transparent;
 }
 
 .table tbody tr:last-child td {
@@ -270,30 +365,195 @@
 }
 
 .table tbody tr:hover td {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* On a narrow panel the table scrolls sideways, which would push the row's
+   primary action off-screen. Pinning the actions column keeps "Connect"
+   reachable at any width instead of making the operator scroll for it. The
+   cells need their own opaque fill or the scrolled columns show through. */
+.hostsTable th:last-child,
+.hostsTable td:last-child {
+  position: sticky;
+  right: 0;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: -6px 0 8px -6px var(--dsw-alias-border-l1);
+}
+
+.hostsTable tbody tr:hover td:last-child {
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+/* Reachability, from the last test this panel ran. `unknown` stays uncoloured:
+   a host nobody has probed yet is not a healthy host. */
+.hostsTable tbody tr[data-state='ok'] td:first-child {
+  border-left-color: var(--dsw-alias-state-success-primary);
+}
+
+.hostsTable tbody tr[data-state='fail'] td:first-child {
+  border-left-color: var(--dsw-alias-state-error-primary);
+}
+
+.hostsTable tbody tr[data-state='testing'] td:first-child {
+  border-left-color: var(--dsw-alias-state-business-primary);
+  animation: dshSshPulse 1.1s ease-in-out infinite;
+}
+
+@keyframes dshSshPulse {
+  50% { opacity: 0.35; }
+}
+
+/* --- the machine identity block ------------------------------------------------
+ *
+ * Signature element. `alias` over `user@host:port` is how the operator already
+ * writes a machine in ~/.ssh/config, so the two-line block replaces three flat
+ * columns with one readable unit and frees the table's width for the columns
+ * that actually vary (tag, environment, description).
+ */
+
+.hostIdentity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.hostAlias {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hostEndpoint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  /* Tabular figures keep ports from shifting the address as they change. */
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hostEndpointSep {
+  opacity: 0.45;
 }
 
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
 .cellMuted {
   color: var(--dsw-alias-label-tertiary);
 }
 
-.actions {
+/* Tag list as discrete marks: a comma-joined string hides how many tags a host
+   has and where one ends. */
+.tagList {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.tag {
+  padding: 1px 6px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  border-radius: 4px;
   white-space: nowrap;
 }
 
+/* --- row actions --------------------------------------------------------------
+ *
+ * One primary action, then quiet text links. Before this, four links of equal
+ * weight sat in a row, so "Delete" looked exactly as inviting as "Test" — the
+ * destructive action had no visual cost.
+ */
+
+.actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.actionLinks {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.actionLink {
+  padding: 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 120ms ease;
+}
+
+.actionLink:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+}
+
+.actionLink:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.actionLink[data-danger]:hover:not(:disabled) {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+/* The one filled control per row, so the next action is unmistakable. */
+.connectButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary-foreground);
+  background: var(--dsw-alias-button-info-fill);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease;
+}
+
+.connectButton:hover {
+  background: var(--dsw-alias-button-info-hover);
+}
+
+/* Test outcome as a chip, not a sentence: the full error stays in `title`. */
 .inlineTest {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11.5px;
+  gap: 4px;
+  max-width: 220px;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.6;
+  border-radius: 4px;
   color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-bg-layer-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .inlineTest[data-status='ok'] {
@@ -304,59 +564,65 @@
   color: var(--dsw-alias-state-error-primary);
 }
 
-/* --- badges ------------------------------------------------------------------- */
+/* --- badges -------------------------------------------------------------------
+ *
+ * A status dot and a word, not a bordered pill. The old pill put a box around
+ * every bit of metadata, which made the least important cell the loudest thing
+ * in the row; a dot carries the same colour signal at a fraction of the weight.
+ * The dot is `currentColor`, so each variant only has to set one colour.
+ */
 
 .badge {
-  display: inline-block;
-  padding: 1px 8px;
-  font-size: 11px;
-  line-height: 1.6;
-  border-radius: 999px;
-  border: 1px solid var(--dsw-alias-border-l2);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  line-height: 1.5;
   color: var(--dsw-alias-label-secondary);
   white-space: nowrap;
 }
 
+.badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  flex: none;
+  border-radius: 50%;
+  background: currentColor;
+}
+
 .badge[data-kind='key'] {
   color: var(--dsw-alias-state-business-primary);
-  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .badge[data-kind='password'] {
   color: var(--dsw-alias-state-warn-primary);
-  border-color: var(--dsw-alias-state-warn-primary);
 }
 
 .badge[data-kind='agent'] {
   color: var(--dsw-alias-state-success-primary);
-  border-color: var(--dsw-alias-state-success-primary);
 }
 
 .badge[data-kind='proxy'] {
-  margin-left: 6px;
+  margin-left: 2px;
   color: var(--dsw-alias-state-business-primary);
-  border-color: var(--dsw-alias-state-business-primary);
 }
 
 .badge[data-kind='forward-agent'] {
-  margin-left: 6px;
+  margin-left: 2px;
   color: var(--dsw-alias-state-warn-primary);
-  border-color: var(--dsw-alias-state-warn-primary);
 }
 
 .badge[data-status='ok'] {
   color: var(--dsw-alias-state-success-primary);
-  border-color: var(--dsw-alias-state-success-primary);
 }
 
 .badge[data-status='fail'] {
   color: var(--dsw-alias-state-error-primary);
-  border-color: var(--dsw-alias-state-error-primary);
 }
 
 .badge[data-status='timeout'] {
   color: var(--dsw-alias-state-warn-primary);
-  border-color: var(--dsw-alias-state-warn-primary);
 }
 
 /* The fleet tab distinguishes four alert states and two change directions.
@@ -366,27 +632,31 @@
    firing alert must never look like). */
 .badge[data-status='error'] {
   color: var(--dsw-alias-state-error-primary);
-  border-color: var(--dsw-alias-state-error-primary);
 }
 
 .badge[data-status='warn'],
 .badge[data-status='pending'] {
   color: var(--dsw-alias-state-warn-primary);
-  border-color: var(--dsw-alias-state-warn-primary);
 }
 
-/* --- buttons ------------------------------------------------------------------ */
+/* --- buttons ------------------------------------------------------------------
+ *
+ * All three share one height and one radius. The old set mixed 5px and 6px
+ * padding, so a toolbar of a search box and two buttons had three baselines.
+ */
 
 .primaryButton {
-  padding: 6px 14px;
-  font-size: 13px;
+  height: 30px;
+  padding: 0 14px;
+  font-size: 12.5px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary-foreground);
   background: var(--dsw-alias-button-info-fill);
   border: none;
-  border-radius: 8px;
+  border-radius: 7px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 120ms ease;
 }
 
 .primaryButton:hover:not(:disabled) {
@@ -399,18 +669,25 @@
 }
 
 .ghostButton {
-  padding: 5px 12px;
-  font-size: 12px;
-  color: var(--dsw-alias-label-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  font-size: 12.5px;
+  color: var(--dsw-alias-label-secondary);
   background: transparent;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  border-radius: 7px;
   cursor: pointer;
   white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .ghostButton:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
 }
 
 .ghostButton:disabled {
@@ -434,7 +711,7 @@
 }
 
 .iconButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
 }
 
@@ -459,6 +736,32 @@
 
 .linkButton[data-danger] {
   color: var(--dsw-alias-state-error-primary);
+}
+
+/* Keyboard focus, once, for everything the panel renders. `:focus-visible` so a
+   mouse click does not leave a ring behind. */
+.panel button:focus-visible,
+.panel input:focus-visible,
+.panel select:focus-visible,
+.panel textarea:focus-visible,
+.panel summary:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+/* Motion here is feedback, never decoration: honour the system preference. */
+@media (prefers-reduced-motion: reduce) {
+  .tab,
+  .tab::after,
+  .search,
+  .actionLink,
+  .connectButton,
+  .ghostButton,
+  .groupChevron,
+  .hostsTable tbody tr[data-state='testing'] td:first-child {
+    transition: none;
+    animation: none;
+  }
 }
 
 /* --- spinner / banners / states ------------------------------------------------ */

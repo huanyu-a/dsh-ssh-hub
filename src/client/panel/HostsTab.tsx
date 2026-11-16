@@ -179,37 +179,60 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
 
   const renderHostRow = (host: SshHostSummary): ReactNode => {
     const test = testResults[host.alias]
+    const testing = testingAlias === host.alias
+    // The rail reports what this panel last observed. A host nobody has tested
+    // stays uncoloured: "not checked" and "reachable" are different facts.
+    const state = testing ? 'testing' : test === undefined ? undefined : test.ok ? 'ok' : 'fail'
     return (
-      <tr key={host.alias}>
-        <td className={css.mono}>{host.alias}</td>
-        <td className={css.mono}>
-          {host.host}:{host.port}
-          {host.proxyCommand !== undefined && (
-            <span className={css.badge} data-kind="proxy" title={host.proxyCommand}>{tt('hosts.proxyBadge')}</span>
-          )}
-          {host.forwardAgent === true && (
-            <span className={css.badge} data-kind="forward-agent" title={tt('hosts.forwardAgentHint')}>{tt('hosts.forwardAgentBadge')}</span>
-          )}
+      <tr key={host.alias} data-state={state}>
+        <td>
+          {/* alias over user@host:port — the machine as the operator already
+              writes it in ~/.ssh/config, in one readable unit. */}
+          <div className={css.hostIdentity}>
+            <span className={css.hostAlias} title={host.alias}>{host.alias}</span>
+            <span className={css.hostEndpoint} title={`${host.user}@${host.host}:${host.port}`}>
+              <span>{host.user}@{host.host}:{host.port}</span>
+              {host.proxyCommand !== undefined && (
+                <span className={css.badge} data-kind="proxy" title={host.proxyCommand}>{tt('hosts.proxyBadge')}</span>
+              )}
+              {host.forwardAgent === true && (
+                <span className={css.badge} data-kind="forward-agent" title={tt('hosts.forwardAgentHint')}>{tt('hosts.forwardAgentBadge')}</span>
+              )}
+            </span>
+          </div>
         </td>
-        <td>{host.user}</td>
         <td><span className={css.badge} data-kind={host.auth}>{host.auth === 'key' ? tt('form.auth.key') : host.auth === 'password' ? tt('form.auth.password') : tt('form.auth.agent')}</span></td>
         <td className={css.cellMuted}>{host.environment ?? ''}</td>
-        <td className={css.cellMuted}>{host.tags.join(', ')}</td>
+        <td>
+          {host.tags.length === 0 ? null : (
+            <span className={css.tagList}>
+              {host.tags.map(tag => <span key={tag} className={css.tag}>{tag}</span>)}
+            </span>
+          )}
+        </td>
         <td className={css.cellMuted}>{host.description ?? ''}</td>
         <td>
           <div className={css.actions}>
-            <button type="button" className={css.linkButton} disabled={testingAlias === host.alias} onClick={() => { void runTest(host.alias) }}>
-              {testingAlias === host.alias ? tt('hosts.testing') : tt('hosts.test')}
-            </button>
-            {testingAlias === host.alias && <span className={css.spinner} aria-hidden="true" />}
-            {test !== undefined && (
-              <span className={css.inlineTest} data-status={test.ok ? 'ok' : 'fail'}>
-                {test.ok ? tt('hosts.testOk', { latency: test.latencyMs ?? 0 }) : tt('hosts.testFail', { error: test.error ?? '' })}
+            {testing && <span className={css.spinner} aria-hidden="true" />}
+            {test !== undefined && !testing && (
+              <span
+                className={css.inlineTest}
+                data-status={test.ok ? 'ok' : 'fail'}
+                // The chip shows a summary because a full error is a paragraph;
+                // the complete text stays reachable on hover.
+                title={test.ok ? tt('hosts.testOk', { latency: test.latencyMs ?? 0 }) : test.error ?? ''}
+              >
+                {test.ok ? tt('hosts.testOkShort', { latency: test.latencyMs ?? 0 }) : tt('hosts.testFailShort')}
               </span>
             )}
-            <button type="button" className={css.linkButton} onClick={() => { setDialog({ mode: 'edit', host }) }}>{tt('hosts.edit')}</button>
-            <button type="button" className={css.linkButton} data-danger onClick={() => { void deleteHost(host.alias) }}>{tt('hosts.delete')}</button>
-            <button type="button" className={css.ghostButton} onClick={() => { onConnect(host.alias) }}>{tt('hosts.connected')}</button>
+            <span className={css.actionLinks}>
+              <button type="button" className={css.actionLink} disabled={testing} onClick={() => { void runTest(host.alias) }}>
+                {testing ? tt('hosts.testingShort') : tt('hosts.test')}
+              </button>
+              <button type="button" className={css.actionLink} onClick={() => { setDialog({ mode: 'edit', host }) }}>{tt('hosts.edit')}</button>
+              <button type="button" className={css.actionLink} data-danger onClick={() => { void deleteHost(host.alias) }}>{tt('hosts.delete')}</button>
+            </span>
+            <button type="button" className={css.connectButton} onClick={() => { onConnect(host.alias) }}>{tt('hosts.connected')}</button>
           </div>
         </td>
       </tr>
@@ -217,12 +240,10 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
   }
 
   const renderHostTable = (rows: SshHostSummary[]): ReactNode => (
-    <table className={css.table}>
+    <table className={`${css.table} ${css.hostsTable}`}>
       <thead>
         <tr>
-          <th>{tt('hosts.col.alias')}</th>
           <th>{tt('hosts.col.host')}</th>
-          <th>{tt('hosts.col.user')}</th>
           <th>{tt('hosts.col.auth')}</th>
           <th>{tt('hosts.col.environment')}</th>
           <th>{tt('hosts.col.tags')}</th>
