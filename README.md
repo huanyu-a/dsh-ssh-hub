@@ -208,11 +208,20 @@ src/
     search.ts           跨机日志检索
     tools.ts            日志工具
   client/panel/
-    FleetTab.tsx        第 6 个页签：机群
+    HostsTab.tsx        主机管理与 SSH 配置导入
+    TerminalTab.tsx     Web 终端
+    TransferTab.tsx     SFTP 文件传输
+    TunnelsTab.tsx      隧道管理（外部隧道探测与 forwards.conf 映射）
+    ClusterTab.tsx      集群并发执行
+    DeployTab.tsx       分批部署与回滚
+    LogsTab.tsx         跨机日志检索
+    FleetTab.tsx        机群状态与巡检监控
 scripts/
   verify-monitor.mjs    装好后对运行中的插件做端到端验收
   verify-ssh2-import.mjs 独立证明 ssh2 的 CJS 导入形式在真实 node 里可用
-tests/                  202 个测试
+  verify-contrast.mjs   双皮肤色彩对比度合规性检测
+  render-preview.mjs    全视图端到端预览渲染与无盲区截图
+tests/                  313 个测试（20 个套件）
 ```
 
 ---
@@ -220,8 +229,8 @@ tests/                  202 个测试
 ## 测试
 
 ```
-Test Files  13 passed (13)
-     Tests  202 passed (202)
+Test Files  20 passed (20)
+     Tests  313 passed (313)
 ```
 
 其中 `tests/ssh-e2e.test.ts` 会起一个**真实的 ssh2 服务端**（自签 RSA 主机密钥、
