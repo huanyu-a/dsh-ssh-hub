@@ -43,6 +43,17 @@ export interface TunnelsTabProps {
 }
 
 /** The tunnels tab. */
+/**
+ * Whether any forward is one this plugin can stop.
+ *
+ * External forwards belong to processes we did not start, so "Stop all" must not
+ * be offered when they are all there is: the button would look enabled and do
+ * nothing. Kept as a pure function so the rule can be asserted without a browser.
+ */
+export function hasOwnedTunnels(tunnels: TunnelInfo[] | null): boolean {
+  return (tunnels ?? []).some(tunnel => tunnel.source !== 'external')
+}
+
 export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
   const [hosts, setHosts] = useState<SshHostSummary[]>([])
   const [tunnels, setTunnels] = useState<TunnelInfo[] | null>(null)
@@ -197,10 +208,17 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
     }
   }
 
+  const ownedExists = hasOwnedTunnels(tunnels)
+
   return (
     <div className={css.tabBody}>
       <div className={css.controls}>
-        <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void stopAll() }}>{tt('tunnel.stopAll')}</button>
+        {/* "Stop all" can only act on forwards this plugin owns. When every row
+            is an external process it would do nothing at all, so it is hidden
+            rather than left there to disappoint the click. */}
+        {ownedExists && (
+          <button type="button" className={css.ghostButton} disabled={busy} onClick={() => { void stopAll() }}>{tt('tunnel.stopAll')}</button>
+        )}
         <button type="button" className={css.ghostButton} onClick={() => { void refresh() }}>{tt('common.refresh')}</button>
       </div>
       {error !== null && <div className={css.banner} data-kind="error">{error}</div>}

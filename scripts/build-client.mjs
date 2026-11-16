@@ -27,56 +27,13 @@ import { build } from 'esbuild'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CSS_MODULES_PLUGIN } from './css-modules-plugin.mjs'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 /** The package name is the loader id; read it so the two can never drift. */
 const pkg = JSON.parse(readFileSync(resolve(root, 'package.json'), 'utf8'))
 const PLUGIN_ID = pkg.name
-
-const CSS_MODULES_PLUGIN = {
-  name: 'css-modules',
-  setup(build) {
-    // Intercept CSS module imports and emit a JS module whose default
-    // export maps class names to scoped hashes. The class-name scoping is
-    // what keeps plugin styles from colliding with the host's.
-    build.onLoad({ filter: /\.module\.css$/ }, async (args) => {
-      const fs = await import('node:fs/promises')
-      const source = await fs.readFile(args.path, 'utf8')
-      // Only a class selector counts: it must start with a letter and be
-      // followed by a name character, and it must not be preceded by a digit
-      // or a dot (so `.5rem` in a numeric value is never mistaken for one).
-      const CLASS_RE = /(?<![\w.-])\.([A-Za-z_][A-Za-z0-9_-]*)/g
-      const classes = [...source.matchAll(CLASS_RE)].map(m => m[1])
-      const scoped = new Map()
-      const hash = hashString(args.path)
-      for (const name of classes) {
-        scoped.set(name, `${name}_${hash}`)
-      }
-      const css = source.replace(CLASS_RE, (match, name) => `.${scoped.get(name) ?? name}`)
-      const body = `
-const style = document.createElement('style')
-style.setAttribute('data-plugin', '')
-style.textContent = ${JSON.stringify(css)}
-if (typeof document !== 'undefined' && !document.querySelector('style[data-plugin][data-key="${hash}"]')) {
-  style.setAttribute('data-key', ${JSON.stringify(hash)})
-  document.head.appendChild(style)
-}
-export default ${JSON.stringify(Object.fromEntries(scoped))}
-`
-      return { contents: body, loader: 'js' }
-    })
-  },
-}
-
-/** Short, stable hash of a file path — used to scope CSS module classes. */
-function hashString(value) {
-  let hash = 5381
-  for (let i = 0; i < value.length; i += 1) {
-    hash = ((hash << 5) + hash + value.charCodeAt(i)) >>> 0
-  }
-  return hash.toString(36)
-}
 
 const result = await build({
   entryPoints: [resolve(root, 'src/client/index.ts')],

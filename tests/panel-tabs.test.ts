@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { SSH_TABS } from '../src/client/panel/tabs.ts'
+import { hasOwnedTunnels } from '../src/client/panel/TunnelsTab.tsx'
 import { en, zh } from '../src/client/locales.ts'
 
 /** The tab ids the panel must offer, in display order. */
@@ -65,5 +66,46 @@ describe('tab table', () => {
       expect(zh[tab.labelKey].length, `zh label for ${tab.id}`).toBeLessThanOrEqual(6)
       expect(en[tab.labelKey].length, `en label for ${tab.id}`).toBeLessThanOrEqual(12)
     }
+  })
+})
+
+/**
+ * "Stop all" must not be offered for forwards this plugin cannot stop.
+ *
+ * Rendering the tunnels tab for the first time showed the button sitting above a
+ * list of eight external forwards: it looked enabled, and clicking it could only
+ * do nothing. The rule is asserted here so it survives refactoring without a
+ * browser.
+ */
+describe('stop-all availability', () => {
+  const base = { id: 't', alias: 'h', localPort: 1, remoteHost: '127.0.0.1', remotePort: 1, state: 'forwarding' as const, startedAt: 0 }
+
+  it('reports no owned tunnels for null or empty', () => {
+    expect(hasOwnedTunnels(null)).toBe(false)
+    expect(hasOwnedTunnels([])).toBe(false)
+  })
+
+  it('hides the action when every forward is external', () => {
+    expect(hasOwnedTunnels([{ ...base, source: 'external' }])).toBe(false)
+    expect(hasOwnedTunnels([
+      { ...base, id: 'a', source: 'external' },
+      { ...base, id: 'b', source: 'external' },
+    ])).toBe(false)
+  })
+
+  it('shows the action for a plugin-owned forward', () => {
+    expect(hasOwnedTunnels([{ ...base, source: 'plugin' }])).toBe(true)
+  })
+
+  it('shows the action when the source is absent (older rows default to owned)', () => {
+    // Rows written before source existed carry no marker; they are ours.
+    expect(hasOwnedTunnels([base])).toBe(true)
+  })
+
+  it('shows the action when a mix contains at least one owned forward', () => {
+    expect(hasOwnedTunnels([
+      { ...base, id: 'a', source: 'external' },
+      { ...base, id: 'b', source: 'plugin' },
+    ])).toBe(true)
   })
 })

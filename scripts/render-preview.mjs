@@ -1,36 +1,53 @@
 /**
- * Render the panel outside the GUI and screenshot both skins.
+ * Render every panel view outside the GUI and screenshot both skins.
  *
  * Why this exists: the running Web GUI sits behind DSH authentication, so the
- * panel could not be looked at directly. For three iterations the styling was
- * justified by token arithmetic alone. This script closes that gap without
- * touching credentials: it takes the REAL compiled CSS out of the built client
- * bundle, the REAL theme out of the installed app archive, and the REAL host and
- * tunnel data from the running plugin, then renders them with headless Chrome.
+ * panel could not be looked at directly. For several iterations the styling was
+ * justified by token arithmetic alone — and arithmetic cannot see a table whose
+ * columns are all empty, or a button that resolves its fill token to nothing.
  *
- * What it proves: what the browser actually computes — resolved var() chains,
- * evaluated color-mix, skin switching, column visibility — rather than what the
- * stylesheet appears to say. It also reports computed colours so contrast can be
- * measured from the engine's own answer.
+ * How it works, without touching any credential:
+ *   - the ACTUAL components are bundled with esbuild (scripts/harness.mjs),
+ *   - scoped with the SAME CSS-module plugin the shipping build uses,
+ *   - fed the theme from the installed app.asar,
+ *   - and served next to a proxy that forwards /api/dsh-ssh to the running
+ *     plugin, so the components run their real request paths.
  *
  * Usage:
  *   node scripts/render-preview.mjs [--out <dir>]
  *
- * Requires: a built lib/client.js, an installed DSH app.asar, and a Chrome or
- * Edge binary. Exits 2 when a prerequisite is missing — a preview that silently
- * renders nothing must not look like a passing check.
+ * Exits 2 (SKIP) when a prerequisite is missing, and 1 when a rendered view is
+ * blank or reports a crash. A preview that renders nothing must never look like
+ * a pass: that is exactly how the earlier harness produced confident, worthless
+ * screenshots.
  */
 
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
+import { bundleHarness } from './harness.mjs'
+import { writeHarnessPage } from './harness-page.mjs'
 
 const ROOT = resolve(new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1'))
 const OUT = (() => {
   const index = process.argv.indexOf('--out')
   return index > 0 ? resolve(process.argv[index + 1]) : join(ROOT, 'artifacts', 'preview')
 })()
+
+/** Every view the harness can mount, with the height it needs to lay out. */
+const VIEWS = [
+  { id: 'hosts', height: 1100 },
+  { id: 'terminal', height: 1100 },
+  { id: 'files', height: 1100 },
+  { id: 'tunnels', height: 1100 },
+  { id: 'cluster', height: 1100 },
+  { id: 'deploy', height: 1100 },
+  { id: 'logs', height: 1100 },
+  { id: 'dialog', height: 1400 },
+]
+
+const SKINS = ['light', 'dark']
 
 /** Candidate browser binaries, in preference order. */
 function findBrowser() {
@@ -78,204 +95,153 @@ function readFromAsar(archive, suffix) {
   }
 }
 
-/** The compiled CSS, exactly as the bundle injects it at runtime. */
-function extractPanelCss() {
-  const bundlePath = join(ROOT, 'lib', 'client.js')
-  if (!existsSync(bundlePath)) return undefined
-  const bundle = readFileSync(bundlePath, 'utf8')
-  const match = /style\.textContent\s*=\s*("(?:[^"\\]|\\.)*")/.exec(bundle)
-  if (match === null) return undefined
-  return JSON.parse(match[1])
-}
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
-/** The hashed class suffix the build used, so the harness applies real styles. */
-function classSuffix(css) {
-  const match = /\.panel_([a-z0-9]+)/.exec(css)
-  return match === null ? undefined : match[1]
-}
-
-/** Live data when the plugin is reachable; a representative fixture otherwise. */
-async function loadData() {
-  const base = process.env.DSH_WEB_URL ?? 'http://127.0.0.1:51697'
-  try {
-    const hosts = await (await fetch(`${base}/api/dsh-ssh/hosts`, { signal: AbortSignal.timeout(4000) })).json()
-    const tunnels = await (await fetch(`${base}/api/dsh-ssh/tunnel`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'list' }),
-      signal: AbortSignal.timeout(4000),
-    })).json()
-    if (Array.isArray(hosts.hosts) && Array.isArray(tunnels.tunnels)) {
-      return { hosts: hosts.hosts, tunnels: tunnels.tunnels, live: true }
-    }
-  } catch { /* fall through to the fixture */ }
-  return {
-    live: false,
-    hosts: [
-      { alias: 'web-01', host: '10.0.0.11', port: 22, user: 'deploy', auth: 'key', tags: ['prod'], environment: 'production', description: 'edge node', proxyJump: [] },
-      { alias: 'web-02', host: '10.0.0.12', port: 22, user: 'deploy', auth: 'key', tags: [], environment: '', description: '', proxyJump: [] },
-      { alias: 'db-01', host: '10.0.0.21', port: 22, user: 'root', auth: 'password', tags: ['prod', 'db'], environment: 'production', description: '', proxyJump: [] },
-      { alias: 'ci-runner', host: '10.0.0.31', port: 2222, user: 'ci', auth: 'agent', tags: [], environment: '', description: '', proxyJump: [] },
-    ],
-    tunnels: [
-      { id: 'a', alias: 'web-01', localPort: 8080, remoteHost: '127.0.0.1', remotePort: 80, state: 'forwarding', source: 'plugin' },
-      { id: 'b', alias: 'db-01', localPort: 5432, remoteHost: '127.0.0.1', remotePort: 5432, state: 'forwarding', source: 'external', pid: 4242, live: true },
-      { id: 'c', alias: 'ci-runner', localPort: 9000, remoteHost: '127.0.0.1', remotePort: 9000, state: 'failed', source: 'external', pid: 4243, live: false },
-    ],
-  }
+/** Screenshot one view, returning the file size so a blank page can be spotted. */
+async function shoot(browser, url, pngPath, height) {
+  const child = spawn(browser, [
+    '--headless=new', '--disable-gpu', '--hide-scrollbars',
+    '--force-device-scale-factor=2', `--window-size=1200,${height}`,
+    '--virtual-time-budget=7000', `--screenshot=${pngPath}`, url,
+  ], { stdio: 'ignore' })
+  const code = await new Promise(resolve => child.on('exit', resolve))
+  if (!existsSync(pngPath)) return { ok: false, bytes: 0, code }
+  return { ok: code === 0 || code === null, bytes: readFileSync(pngPath).length, code }
 }
 
 /**
- * Build the harness page.
+ * Read what the harness rendered, so a crash is reported as a crash.
  *
- * Markup mirrors the components: the same class names, the same data attributes,
- * the same column-visibility rule (a column appears only when some host has data
- * for it). A harness that invents its own structure would verify nothing.
+ * A blank screenshot is ambiguous: it could mean "this view is empty by design".
+ * Asking the page settles it.
  */
-function buildPage(skin, css, theme, suffix, data) {
-  const c = name => `${name}_${suffix}`
-  const dark = skin === 'dark'
-  const visible = {
-    environment: data.hosts.some(host => (host.environment ?? '') !== ''),
-    tags: data.hosts.some(host => (host.tags ?? []).length > 0),
-    description: data.hosts.some(host => (host.description ?? '') !== ''),
-  }
-  const authLabel = { key: 'Private key', password: 'Password', agent: 'Agent', none: 'None' }
-  const rows = data.hosts.map((host, index) => {
-    // Show each observable state once so every rail and chip is exercised.
-    const state = index === 0 ? 'ok' : index === 2 ? 'fail' : index === 3 ? 'testing' : ''
-    const chip = state === 'ok'
-      ? `<span class="${c('inlineTest')}" data-status="ok">188 ms</span>`
-      : state === 'fail'
-        ? `<span class="${c('inlineTest')}" data-status="fail">failed</span>`
-        : state === 'testing'
-          ? `<span class="${c('spinner')}"></span>`
-          : ''
-    return `<tr data-state="${state}">
-      <td><div class="${c('hostIdentity')}">
-        <span class="${c('hostAlias')}">${host.alias}</span>
-        <span class="${c('hostEndpoint')}"><span>${host.user}@${host.host}:${host.port}</span></span>
-      </div></td>
-      <td><span class="${c('badge')}" data-kind="${host.auth}">${authLabel[host.auth] ?? host.auth}</span></td>
-      ${visible.environment ? `<td class="${c('cellMuted')}">${host.environment ?? ''}</td>` : ''}
-      ${visible.tags ? `<td>${(host.tags ?? []).length > 0 ? `<span class="${c('tagList')}">${host.tags.map(tag => `<span class="${c('tag')}">${tag}</span>`).join('')}</span>` : ''}</td>` : ''}
-      ${visible.description ? `<td class="${c('cellMuted')}">${host.description ?? ''}</td>` : ''}
-      <td><div class="${c('actions')}">${chip}
-        <span class="${c('actionLinks')}">
-          <button class="${c('actionLink')}">Test</button>
-          <button class="${c('actionLink')}">Edit</button>
-          <button class="${c('actionLink')}" data-danger>Delete</button>
-        </span>
-        <button class="${c('connectButton')}">Connect</button>
-      </div></td>
-    </tr>`
-  }).join('')
-  const tunnels = data.tunnels.slice(0, 6).map(tunnel => `<div class="${c('tunnelRow')}" data-state="${tunnel.state}" data-source="${tunnel.source ?? 'plugin'}">
-      <span class="${c('tunnelLabel')}">${tunnel.alias} &middot; 127.0.0.1:${tunnel.localPort} &rarr; ${tunnel.remoteHost}:${tunnel.remotePort}${tunnel.pid !== undefined ? ` (pid ${tunnel.pid})` : ''}</span>
-      ${tunnel.source === 'external'
-        ? `<span class="${c('tunnelState')}" data-live="${tunnel.live === true ? 'true' : 'false'}">${tunnel.live === true ? 'Port accepting' : 'Port NOT listening'}</span>`
-        : `<button class="${c('ghostButton')}">Stop</button>`}
-    </div>`).join('')
-  return `<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"><title>SSH Hub preview (${skin})</title>
-<style>${theme}</style>
-<style>
-html,body{margin:0;padding:0}
-body{background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family)}
-.shell{width:1180px}
-</style>
-<style>${css}</style></head>
-<body${dark ? ' data-ds-dark-theme' : ''}><div class="shell">
-  <div class="${c('view')}"><div class="${c('panel')}">
-    <div class="${c('panelHeader')}"><span class="${c('panelTitle')}">SSH Hub</span></div>
-    <div class="${c('tabBar')}">
-      <button class="${c('tab')}" data-active="true">Hosts</button>
-      <button class="${c('tab')}">Terminal</button>
-      <button class="${c('tab')}">Files</button>
-      <button class="${c('tab')}">Tunnels</button>
-      <button class="${c('tab')}">Batch</button>
-      <button class="${c('tab')}">Monitoring</button>
-      <button class="${c('tab')}">Deploy</button>
-      <button class="${c('tab')}">Logs</button>
-    </div>
-    <div class="${c('panelContent')}"><div class="${c('panel')}">
-      <div class="${c('toolbar')}"><input class="${c('search')}" placeholder="Filter hosts"></div>
-      <div class="${c('tableWrap')}"><table class="${c('table')} ${c('hostsTable')}">
-        <thead><tr>
-          <th>Host</th><th>Auth</th>
-          ${visible.environment ? '<th>Environment</th>' : ''}
-          ${visible.tags ? '<th>Tags</th>' : ''}
-          ${visible.description ? '<th>Description</th>' : ''}
-          <th>Actions</th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table></div>
-    </div></div>
-  </div></div>
-  <div class="${c('panel')}" style="margin-top:20px"><div class="${c('panelContent')}">
-    <div class="${c('hint')}">Forwards started outside this panel are read-only.</div>
-    <div class="${c('tunnelList')}">${tunnels}</div>
-    <div class="${c('banner')}" data-kind="ok">Imported 2 hosts from ~/.ssh/config.</div>
-    <div class="${c('banner')}" data-kind="warn">Monitoring is off; the alert list is not a health signal.</div>
-    <div class="${c('banner')}" data-kind="error">Connection to instabox-1 failed: upstream closed the socket.</div>
-  </div></div>
-</div></body></html>`
-}
-
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
-
-/** Screenshot one page with headless Chrome. */
-async function shoot(browser, htmlPath, pngPath) {
-  const url = 'file:///' + htmlPath.replace(/\\/g, '/')
-  const child = spawn(browser, [
-    '--headless=new', '--disable-gpu', '--hide-scrollbars',
-    '--force-device-scale-factor=2', '--window-size=1200,1250',
-    `--screenshot=${pngPath}`, url,
+async function inspectPage(browser, url) {
+  const port = 9412 + Math.floor(Math.random() * 80)
+  const profile = join(tmpdir(), `dsh-ssh-inspect-${process.pid}`)
+  const chrome = spawn(browser, [
+    '--headless=new', '--disable-gpu', `--remote-debugging-port=${port}`,
+    `--user-data-dir=${profile}`, '--no-first-run', '--no-default-browser-check', 'about:blank',
   ], { stdio: 'ignore' })
-  const code = await new Promise(resolve => child.on('exit', resolve))
-  return existsSync(pngPath) && (code === 0 || code === null)
+  let ready = false
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(250)
+    try { await (await fetch(`http://127.0.0.1:${port}/json/version`)).json(); ready = true; break } catch { /* starting */ }
+  }
+  if (!ready) { chrome.kill(); return { error: 'CDP never came up' } }
+  try {
+    const target = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' })).json()
+    const ws = new WebSocket(target.webSocketDebuggerUrl)
+    await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
+    let id = 0
+    const pending = new Map()
+    ws.onmessage = event => {
+      const message = JSON.parse(event.data)
+      if (message.id !== undefined && pending.has(message.id)) { pending.get(message.id)(message); pending.delete(message.id) }
+    }
+    const send = (method, params = {}) => new Promise(done => {
+      id += 1
+      pending.set(id, done)
+      ws.send(JSON.stringify({ id, method, params }))
+    })
+    await send('Runtime.enable')
+    await sleep(3500)
+    const expression = `(() => {
+      const crash = document.getElementById('harness-crash')
+      const root = document.getElementById('root')
+      return JSON.stringify({
+        crash: crash ? crash.textContent : null,
+        html: root ? root.innerHTML.length : 0,
+        text: root ? root.innerText.trim().length : 0,
+        hashed: document.querySelectorAll('[class*="_"]').length,
+        undefinedClasses: document.querySelectorAll('[class*="undefined"]').length,
+      })
+    })()`
+    const result = await send('Runtime.evaluate', { expression, returnByValue: true })
+    ws.close()
+    await fetch(`http://127.0.0.1:${port}/json/close/${target.id}`)
+    return JSON.parse(result.result?.result?.value ?? '{}')
+  } finally {
+    chrome.kill()
+  }
 }
 
 async function main() {
   const browser = findBrowser()
-  const css = extractPanelCss()
   const theme = readFromAsar(
     join(process.env.LOCALAPPDATA ?? '', 'Programs/DeepSeek Harness/resources/app.asar'),
     'dsh-client-ui-theme/src/styles/design-platform.css',
   )
   const missing = []
   if (browser === undefined) missing.push('a Chrome or Edge binary')
-  if (css === undefined) missing.push('lib/client.js with injected CSS (run build:client)')
   if (theme === undefined) missing.push('the installed DSH theme stylesheet')
+  if (!existsSync(join(ROOT, 'lib', 'client.js'))) missing.push('a built bundle (run build:client)')
   if (missing.length > 0) {
     console.error('SKIP  cannot render a preview, missing:')
     for (const item of missing) console.error(`  - ${item}`)
     console.error('      this is a failure to verify, not a pass')
     process.exit(2)
   }
-  const suffix = classSuffix(css)
-  if (suffix === undefined) {
-    console.error('SKIP  cannot determine the CSS class hash from the bundle')
+
+  mkdirSync(OUT, { recursive: true })
+  // The harness and its page are written to the artifacts directory so the
+  // proxy can serve them; both are regenerated on every run.
+  console.log('bundling the real components...')
+  writeFileSync(join(OUT, 'harness.js'), await bundleHarness())
+  if (!writeHarnessPage(ROOT, OUT)) {
+    console.error('SKIP  could not write the harness page (theme missing)')
     process.exit(2)
   }
 
-  const data = await loadData()
-  console.log(`data: ${data.live ? 'live plugin' : 'built-in fixture'} (${data.hosts.length} hosts, ${data.tunnels.length} tunnels)`)
-  mkdirSync(OUT, { recursive: true })
-  const scratch = join(tmpdir(), `dsh-ssh-preview-${process.pid}`)
-  mkdirSync(scratch, { recursive: true })
+  const port = Number(process.env.HARNESS_PORT ?? 5179)
+  const server = spawn(process.execPath, [join(ROOT, 'scripts', 'harness-server.mjs'), OUT], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, HARNESS_PORT: String(port) },
+  })
+  const serverLog = []
+  server.stdout.on('data', chunk => serverLog.push(String(chunk)))
+  server.stderr.on('data', chunk => serverLog.push(String(chunk)))
 
-  let ok = true
-  for (const skin of ['light', 'dark']) {
-    const htmlPath = join(scratch, `preview-${skin}.html`)
-    writeFileSync(htmlPath, buildPage(skin, css, theme, suffix, data))
-    const pngPath = join(OUT, `panel-${skin}.png`)
-    const shot = await shoot(browser, htmlPath, pngPath)
-    console.log(`${skin.padEnd(5)} ${shot ? 'rendered' : 'FAILED'}  ${pngPath}`)
-    if (!shot) ok = false
+  let connected = false
+  for (let i = 0; i < 40; i += 1) {
+    await sleep(250)
+    try { await fetch(`http://127.0.0.1:${port}/api/dsh-ssh/hosts`, { signal: AbortSignal.timeout(1500) }); connected = true; break } catch { /* starting */ }
   }
-  console.log(ok ? `\nPREVIEW OK  both skins rendered into ${OUT}` : '\nPREVIEW FAILED')
-  process.exit(ok ? 0 : 1)
+  if (!connected) {
+    server.kill()
+    console.error('SKIP  the harness proxy never came up')
+    for (const line of serverLog.slice(0, 6)) console.error(`      ${line.trim()}`)
+    process.exit(2)
+  }
+
+  let failures = 0
+  try {
+    for (const skin of SKINS) {
+      for (const view of VIEWS) {
+        const url = `http://127.0.0.1:${port}/?tab=${view.id}&skin=${skin}`
+        const pngPath = join(OUT, `real-${view.id}-${skin}.png`)
+        const shot = await shoot(browser, url, pngPath, view.height)
+        // A harness crash renders text, so a crashed view can still be large.
+        // Check both the file and what the page actually produced.
+        const page = await inspectPage(browser, url)
+        const problems = []
+        if (!shot.ok) problems.push('screenshot failed')
+        if (shot.bytes < 3000) problems.push(`only ${shot.bytes} bytes (blank)`)
+        if (page.crash !== null && page.crash !== undefined) problems.push(`crash: ${String(page.crash).slice(0, 120)}`)
+        if (page.undefinedClasses > 0) problems.push(`${page.undefinedClasses} elements have "undefined" as a class`)
+        if (page.hashed === 0) problems.push('no scoped classes were applied')
+        const verdict = problems.length === 0 ? 'ok' : problems.join('; ')
+        if (problems.length > 0) failures += 1
+        console.log(`  ${skin.padEnd(5)} ${view.id.padEnd(9)} ${String(Math.round(shot.bytes / 1024)).padStart(4)} KB  ${verdict}`)
+      }
+    }
+  } finally {
+    server.kill()
+  }
+
+  console.log(failures === 0
+    ? `\nPREVIEW OK  ${VIEWS.length * SKINS.length} views rendered into ${OUT}`
+    : `\nPREVIEW FAILED  ${failures} view(s) blank or broken`)
+  process.exit(failures === 0 ? 0 : 1)
 }
 
 main().catch(error => { console.error('FAILED', error.message); process.exit(1) })
