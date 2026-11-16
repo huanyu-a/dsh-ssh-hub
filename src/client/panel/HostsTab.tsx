@@ -201,6 +201,16 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
     }
   }
 
+  // One source of truth for column visibility: the header and every body cell
+  // read this, so they cannot disagree and knock the table out of alignment.
+  // A column appears only when some host in the currently rendered set has data
+  // for it; three permanently blank columns were eating ~40% of the width.
+  const visibleColumns = {
+    environment: (hosts ?? []).some(host => (host.environment ?? '') !== ''),
+    tags: (hosts ?? []).some(host => host.tags.length > 0),
+    description: (hosts ?? []).some(host => (host.description ?? '') !== ''),
+  }
+
   const renderHostRow = (host: SshHostSummary): ReactNode => {
     const test = testResults[host.alias]
     const testing = testingAlias === host.alias
@@ -226,15 +236,17 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
           </div>
         </td>
         <td><span className={css.badge} data-kind={host.auth}>{host.auth === 'key' ? tt('form.auth.key') : host.auth === 'password' ? tt('form.auth.password') : tt('form.auth.agent')}</span></td>
-        <td className={css.cellMuted}>{host.environment ?? ''}</td>
-        <td>
-          {host.tags.length === 0 ? null : (
-            <span className={css.tagList}>
-              {host.tags.map(tag => <span key={tag} className={css.tag}>{tag}</span>)}
-            </span>
-          )}
-        </td>
-        <td className={css.cellMuted}>{host.description ?? ''}</td>
+        {visibleColumns.environment && <td className={css.cellMuted}>{host.environment ?? ''}</td>}
+        {visibleColumns.tags && (
+          <td>
+            {host.tags.length === 0 ? null : (
+              <span className={css.tagList}>
+                {host.tags.map(tag => <span key={tag} className={css.tag}>{tag}</span>)}
+              </span>
+            )}
+          </td>
+        )}
+        {visibleColumns.description && <td className={css.cellMuted}>{host.description ?? ''}</td>}
         <td>
           <div className={css.actions}>
             {testing && <span className={css.spinner} aria-hidden="true" />}
@@ -269,9 +281,9 @@ export function HostsTab({ api, onConnect }: HostsTabProps) {
         <tr>
           <th>{tt('hosts.col.host')}</th>
           <th>{tt('hosts.col.auth')}</th>
-          <th>{tt('hosts.col.environment')}</th>
-          <th>{tt('hosts.col.tags')}</th>
-          <th>{tt('hosts.col.description')}</th>
+          {visibleColumns.environment && <th>{tt('hosts.col.environment')}</th>}
+          {visibleColumns.tags && <th>{tt('hosts.col.tags')}</th>}
+          {visibleColumns.description && <th>{tt('hosts.col.description')}</th>}
           <th>{tt('hosts.col.actions')}</th>
         </tr>
       </thead>
