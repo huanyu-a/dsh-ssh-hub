@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build output
+lib/
+*.tsbuildinfo
+
+# Packaged artifacts
+artifacts/
+*.tgz
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+*.swp
