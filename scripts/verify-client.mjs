@@ -302,6 +302,8 @@ const UI_CLASSES = [
   'modalCard', 'modalHeader',
   // tunnel rows: the external-forward state readout (TunnelsTab)
   'tunnelRow', 'tunnelState',
+  // the row's edit/stop cluster and the "typed by an operator" name tag
+  'tunnelActions', 'tunnelRemarkTag',
 ]
 for (const name of UI_CLASSES) {
   if (!bundleText.includes(`"${name}": "${name}_`)) {

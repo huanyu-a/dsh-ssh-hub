@@ -45,6 +45,8 @@ const VIEWS = [
   { id: 'deploy', height: 1100 },
   { id: 'logs', height: 1100 },
   { id: 'dialog', height: 1400 },
+  { id: 'tunnel-edit', height: 1200 },
+  { id: 'tunnel-remark', height: 1000 },
   // The whole panel shell: its own header and tab strip, which the per-tab views
   // do not exercise because they render a simplified header.
   { id: 'shell', height: 1100 },

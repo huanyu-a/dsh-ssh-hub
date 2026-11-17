@@ -10,6 +10,7 @@ import type { SshEngine } from './engine.ts'
 import type { ClusterResult, ExecResult, SshAuthKind, SshHostSummary, TunnelInfo } from './protocol.ts'
 import { redactCommand, redactOutput } from './security/redact.ts'
 import { discoverExternalTunnels } from './engine/tunnel-discovery.ts'
+import { readTunnelRemarks, setTunnelRemark } from './engine/tunnel-remarks.ts'
 import type { AuditRecorder } from './audit/recorder.ts'
 
 /** One text content block (the only render shape these tools emit). */
@@ -327,13 +328,13 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
     name: 'ssh_tunnel',
     description: 'Manage local port-forward tunnels to a configured SSH host. Start a tunnel to reach a remote internal service (database, web UI, API) through 127.0.0.1 on this machine.',
     parameters: {
-      action: { type: 'string', required: true, enum: ['start', 'list', 'stop', 'stop-all'], description: 'start / list / stop / stop-all.' },
+      action: { type: 'string', required: true, enum: ['start', 'list', 'stop', 'stop-all', 'update', 'remark'], description: 'start / list / stop / stop-all / update (edit a plugin-owned tunnel) / remark (annotate a tunnel another process owns).' },
       alias: { type: 'string', description: 'Host alias (required for start, optional for stop-all).' },
-      remotePort: { type: 'integer', description: 'Port on the remote side (required for start).' },
-      remoteHost: { type: 'string', description: 'Remote host to forward to (default 127.0.0.1 — the server itself).' },
-      localPort: { type: 'integer', description: 'Local listening port (default: auto-assigned).' },
-      name: { type: 'string', description: 'Optional project or service name for this tunnel (e.g. redis, api).' },
-      description: { type: 'string', description: 'Optional remark or purpose for this tunnel.' },
+      remotePort: { type: 'integer', description: 'Port on the remote side (required for start; optional new value for update).' },
+      remoteHost: { type: 'string', description: 'Remote host to forward to (default 127.0.0.1 — the server itself; optional new value for update).' },
+      localPort: { type: 'integer', description: 'Local listening port (default: auto-assigned; the identity of the forward for remark).' },
+      name: { type: 'string', description: 'Optional project or service name for this tunnel (e.g. redis, api). An empty string clears it for update/remark.' },
+      description: { type: 'string', description: 'Optional remark or purpose for this tunnel. An empty string clears it for update/remark.' },
       tunnelId: { type: 'string', description: 'Tunnel id (required for stop).' },
     },
     output: {
@@ -401,7 +402,7 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
         // The same answer the panel gives: a forward started outside this
         // plugin is still a forward, and reporting "no active tunnels" while
         // one serves traffic sends the reader looking in the wrong place.
-        const external = await discoverExternalTunnels(managed)
+        const external = await discoverExternalTunnels(managed, readTunnelRemarks())
         return { ok: true, tunnels: [...managed, ...external] }
       }
       if (args.action === 'start') {
@@ -438,6 +439,38 @@ export function sshTunnelTool(engine: SshEngine, audit?: AuditRecorder) {
         return stopped
           ? { ok: true, stopped: 1 }
           : { ok: false, stopped: 0, error: `tunnel '${args.tunnelId}' not found` }
+      }
+      if (args.action === 'update') {
+        if (args.tunnelId === undefined) throw new Error('tunnelId is required for update')
+        try {
+          const result = await engine.updateTunnel(args.tunnelId, {
+            name: args.name,
+            description: args.description,
+            remoteHost: args.remoteHost,
+            remotePort: args.remotePort,
+            localPort: args.localPort,
+          })
+          audit?.record('tunnel.update', {
+            ok: true,
+            targets: [result.tunnel.alias],
+            summary: `tunnel ${args.tunnelId} updated${result.restarted ? ' (rebuilt)' : ''}`,
+            detail: { localPort: result.tunnel.localPort, restarted: result.restarted },
+          })
+          return { ok: true, tunnel: result.tunnel }
+        } catch (error) {
+          return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        }
+      }
+      if (args.action === 'remark') {
+        if (args.localPort === undefined) throw new Error('localPort is required for remark')
+        try {
+          // Two empty fields delete the entry, which is how forwards.conf
+          // becomes visible again — the tool reports success either way.
+          setTunnelRemark(args.localPort, { name: args.name, description: args.description })
+          return { ok: true }
+        } catch (error) {
+          return { ok: false, error: error instanceof Error ? error.message : String(error) }
+        }
       }
       if (args.action === 'stop-all') {
         const stopped = engine.stopAllTunnels(args.alias)

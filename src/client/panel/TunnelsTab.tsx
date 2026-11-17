@@ -1,12 +1,13 @@
 /**
  * Tunnels tab: the live local port-forward list (auto-refresh every 5s while
- * visible) with per-row stop, a stop-all action scoped to the selected alias,
- * and a new-tunnel form.
+ * visible) with per-row edit and stop, a stop-all action scoped to the selected
+ * alias, and a new-tunnel form.
  */
 import { useEffect, useRef, useState } from 'react'
 import type { SshApi } from '../api.ts'
 import type { SshHostSummary, TunnelInfo } from '../../protocol.ts'
 import { errorMessage, tt } from './helpers.ts'
+import { TunnelEditDialog } from './TunnelEditDialog.tsx'
 import css from './panel.module.css'
 
 /** Live-tunnel polling interval while the tab and page are visible (ms). */
@@ -29,7 +30,8 @@ export function diffTunnels(prev: TunnelInfo[] | null, next: TunnelInfo[]): Tunn
       || a.remotePort !== b.remotePort || a.startedAt !== b.startedAt
       || a.error !== b.error || a.source !== b.source || a.pid !== b.pid
       || a.live !== b.live || a.kind !== b.kind
-      || a.name !== b.name || a.description !== b.description) {
+      || a.name !== b.name || a.description !== b.description
+      || a.customRemark !== b.customRemark) {
       return next
     }
   }
@@ -66,6 +68,7 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
   const [localPort, setLocalPort] = useState('')
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
+  const [editing, setEditing] = useState<TunnelInfo | null>(null)
 
   // Hosts for the new-tunnel form (failure does not block tunnel listing).
   useEffect(() => {
@@ -250,6 +253,9 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
               </div>
               {(Boolean(tunnel.description) || tunnel.source === 'external') && (
                 <div className={css.tunnelMetaLine}>
+                  {tunnel.customRemark === true && (
+                    <span className={css.tunnelRemarkTag}>{tt('tunnel.customRemark')}</span>
+                  )}
                   {tunnel.description !== undefined && tunnel.description !== '' && (
                     <span className={css.tunnelDesc}>{tunnel.description}</span>
                   )}
@@ -259,18 +265,34 @@ export function TunnelsTab({ api, active = true }: TunnelsTabProps) {
                 </div>
               )}
             </div>
-            {tunnel.source === 'external'
-              ? (
-                <span className={css.tunnelState} data-live={tunnel.live === true ? 'true' : 'false'}>
-                  {tunnel.live === true ? tt('tunnel.externalLive') : tt('tunnel.externalDead')}
-                </span>
-              )
-              : (
-                <button type="button" className={css.ghostButton} onClick={() => { void stopTunnel(tunnel.id) }}>{tt('tunnel.stop')}</button>
-              )}
+            <div className={css.tunnelActions}>
+              <button type="button" className={css.ghostButton} onClick={() => { setEditing(tunnel) }}>{tt('tunnel.edit')}</button>
+              {tunnel.source === 'external'
+                ? (
+                  <span className={css.tunnelState} data-live={tunnel.live === true ? 'true' : 'false'}>
+                    {tunnel.live === true ? tt('tunnel.externalLive') : tt('tunnel.externalDead')}
+                  </span>
+                )
+                : (
+                  <button type="button" className={css.ghostButton} onClick={() => { void stopTunnel(tunnel.id) }}>{tt('tunnel.stop')}</button>
+                )}
+            </div>
           </div>
         ))}
       </div>
+      {editing !== null && (
+        <TunnelEditDialog
+          api={api}
+          tunnel={editing}
+          onClose={() => { setEditing(null) }}
+          onSaved={notice => {
+            setEditing(null)
+            setNotice(notice)
+            setError(null)
+            void refresh()
+          }}
+        />
+      )}
       <div className={css.formCard}>
         <div className={css.formRow}>
           <label className={css.field}>

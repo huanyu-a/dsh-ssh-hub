@@ -468,6 +468,36 @@ export class SshApi {
     return body.ok
   }
 
+  /**
+   * Edit a tunnel this plugin owns. An empty name/remark clears it (the
+   * forwards.conf value shows through again); a routing change rebuilds the
+   * forward, which the response reports as `restarted`.
+   */
+  async updateTunnel(
+    tunnelId: string,
+    patch: { name?: string; description?: string; remoteHost?: string; remotePort?: number; localPort?: number },
+  ): Promise<{ tunnel: TunnelInfo; restarted: boolean }> {
+    const response = await fetch(SSH_API.tunnel, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'update', tunnelId, ...patch }),
+    })
+    return readJson<{ tunnel: TunnelInfo; restarted: boolean }>(response)
+  }
+
+  /**
+   * Set or clear the name/remark of a forward another process owns. Keyed by
+   * local port so the annotation survives that process restarting.
+   */
+  async setTunnelRemark(localPort: number, remark: { name?: string; description?: string }): Promise<void> {
+    const response = await fetch(SSH_API.tunnel, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ action: 'remark', localPort, ...remark }),
+    })
+    await readJson<{ ok: boolean }>(response)
+  }
+
   async stopAllTunnels(alias?: string): Promise<number> {
     const response = await fetch(SSH_API.tunnel, {
       method: 'POST',

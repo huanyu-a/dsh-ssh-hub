@@ -1460,6 +1460,28 @@
   border: 1px solid var(--dsw-alias-border-l1);
 }
 
+/* Marks a name the operator typed, so it is never confused with one the
+   plugin guessed from forwards.conf. Same chip geometry as the pid tag; the
+   colour carries the difference, the word carries the meaning. */
+.tunnelRemarkTag {
+  flex: none;
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  color: var(--ssh-ink-muted);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+}
+
+/* Edit and stop sit as one block on the right rail: the row's own width must
+   not decide where the buttons land, or a long endpoint pushes them out. */
+.tunnelActions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .tunnelLabel {
   flex: 1;
   min-width: 0;

@@ -18,6 +18,7 @@ import type { WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import type { SshEngine } from './engine.ts'
 import { TerminalSessionRegistry } from './engine/terminal-sessions.ts'
 import { discoverExternalTunnels } from './engine/tunnel-discovery.ts'
+import { readTunnelRemarks, setTunnelRemark } from './engine/tunnel-remarks.ts'
 import { readJsonBody, writeJson } from './http.ts'
 import { isLoopbackRequest } from './loopback.ts'
 import { SSH_API, type HostPayload, type TerminalServerFrame } from './protocol.ts'
@@ -719,7 +720,7 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
           const managed = engine.listTunnels()
           // Forwards started outside this plugin (`ssh -N -L …`) are real and
           // were invisible: the tab only knew what it had created itself.
-          const external = await discoverExternalTunnels(managed)
+          const external = await discoverExternalTunnels(managed, readTunnelRemarks())
           writeJson(res, 200, { tunnels: [...managed, ...external] })
           return
         }
@@ -751,6 +752,50 @@ const maxUploadBytes = deps.maxUploadBytes ?? MAX_UPLOAD_BYTES
             return
           }
           writeJson(res, 200, { ok: engine.stopTunnel(id) })
+          return
+        }
+        // Editing a tunnel this plugin owns: name/remark change in place, a
+        // routing change rebuilds the forward (and says so in `restarted`).
+        if (action === 'update') {
+          const id = typeof body?.tunnelId === 'string' ? body.tunnelId : ''
+          if (id === '') {
+            writeJson(res, 400, { error: 'tunnelId is required' })
+            return
+          }
+          try {
+            const result = await engine.updateTunnel(id, {
+              // Present means "set this value"; an empty string is the explicit
+              // clear, which the engine turns into "fall back to forwards.conf".
+              name: typeof body?.name === 'string' ? body.name : undefined,
+              description: typeof body?.description === 'string' ? body.description : undefined,
+              remoteHost: typeof body?.remoteHost === 'string' && body.remoteHost.trim() !== '' ? body.remoteHost.trim() : undefined,
+              remotePort: typeof body?.remotePort === 'number' ? body.remotePort : undefined,
+              localPort: typeof body?.localPort === 'number' ? body.localPort : undefined,
+            })
+            writeJson(res, 200, result)
+          } catch (error) {
+            writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+          }
+          return
+        }
+        // Editing a tunnel another process owns: only the name/remark can be
+        // changed, because the forward itself belongs to a process we must not
+        // touch. The remark persists by local port so it survives a restart.
+        if (action === 'remark') {
+          const localPort = typeof body?.localPort === 'number' ? body.localPort : undefined
+          if (localPort === undefined || !Number.isInteger(localPort) || localPort < 1 || localPort > 65535) {
+            writeJson(res, 400, { error: 'localPort must be an integer in 1..65535' })
+            return
+          }
+          try {
+            const stored = setTunnelRemark(localPort, {
+              name: typeof body?.name === 'string' ? body.name : undefined,
+              description: typeof body?.description === 'string' ? body.description : undefined,
+            })
+            writeJson(res, 200, { ok: true, remark: stored ?? null })
+          } catch (error) {
+            writeJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+          }
           return
         }
         if (action === 'stop-all') {

@@ -32,6 +32,7 @@ export type AuditAction =
   | 'download'
   | 'tunnel.start'
   | 'tunnel.stop'
+  | 'tunnel.update'
   | 'deploy'
   | 'rollback'
   | 'inspect.run'

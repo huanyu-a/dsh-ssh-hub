@@ -20,13 +20,13 @@ import {
 } from './engine/connection-pool.ts'
 import { openShell, type ShellSession } from './engine/pty.ts'
 import { download, ls, upload } from './engine/sftp.ts'
-import { listTunnels, startTunnel, stopAllTunnels, stopTunnel, type TunnelRecord } from './engine/tunnel.ts'
+import { listTunnels, startTunnel, stopAllTunnels, stopTunnel, updateTunnel, type TunnelRecord, type TunnelUpdate, type TunnelUpdateResult } from './engine/tunnel.ts'
 import { cluster } from './engine/cluster.ts'
 
 export type { EngineOptions, KeyboardInteractiveHandler } from './engine/connection-pool.ts'
 export type { ShellSession } from './engine/pty.ts'
 export type { PoolRecord } from './engine/connection-pool.ts'
-export type { TunnelRecord } from './engine/tunnel.ts'
+export type { TunnelRecord, TunnelUpdate, TunnelUpdateResult } from './engine/tunnel.ts'
 
 /**
  * The engine. Owns the pool, tunnels, and all operations. One instance per
@@ -140,6 +140,14 @@ export class SshEngine {
   /** All active tunnels. */
   listTunnels(): TunnelInfo[] {
     return listTunnels(this)
+  }
+
+  /**
+   * Edit one tunnel. A name/remark change is applied in place; a routing change
+   * rebuilds the forward and reports `restarted: true`.
+   */
+  async updateTunnel(id: string, patch: TunnelUpdate): Promise<TunnelUpdateResult> {
+    return updateTunnel(this, id, patch)
   }
 
   /** Stop one tunnel (closes the listener, live sockets, and the pinned connection). */

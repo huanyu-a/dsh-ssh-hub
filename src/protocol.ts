@@ -167,6 +167,12 @@ export interface TunnelInfo {
   name?: string
   /** Remarks / note about what project or service this tunnel serves. */
   description?: string
+  /**
+   * True when the name/description came from a stored user remark rather than
+   * `~/.ssh/forwards.conf`. The panel marks these so a stale automatic name is
+   * not mistaken for one the operator typed.
+   */
+  customRemark?: boolean
 }
 
 /**

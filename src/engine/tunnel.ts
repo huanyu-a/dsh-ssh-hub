@@ -168,6 +168,101 @@ export function listTunnels(engine: TunnelEngine): TunnelInfo[] {
   })
 }
 
+/** Fields an editor may change on an existing tunnel. */
+export interface TunnelUpdate {
+  /** New service name; an empty string (or null) clears it, letting forwards.conf show through. */
+  name?: string | null
+  /** New remark; an empty string (or null) clears it. */
+  description?: string | null
+  /** New remote target host. */
+  remoteHost?: string
+  /** New remote target port. */
+  remotePort?: number
+  /** New local listening port. */
+  localPort?: number
+}
+
+/** What an edit did, so a caller can tell a rename from a rebuild. */
+export interface TunnelUpdateResult {
+  tunnel: TunnelInfo
+  /** True when the forward was torn down and rebuilt because its routing changed. */
+  restarted: boolean
+}
+
+/** Normalise an optional text patch: undefined keeps, blank clears. */
+function textPatch(value: string | null | undefined): string | undefined {
+  if (value === null || value === undefined) return undefined
+  const trimmed = value.trim()
+  return trimmed === '' ? undefined : trimmed
+}
+
+/**
+ * Edit an existing tunnel.
+ *
+ * A name or remark change is applied to the live record in place — renaming a
+ * forward costs nothing and must not interrupt traffic. A routing change cannot
+ * be done in place: the listener is bound to the old target, so the forward is
+ * stopped and rebuilt from the new parameters, and the caller is told
+ * (`restarted: true`) rather than left to guess whether connections dropped.
+ *
+ * When the rebuild fails the previous forward is already closed. That is
+ * reported explicitly instead of surfacing a bare "connect failed", which would
+ * read as if the old tunnel were still serving.
+ *
+ * @param engine - the tunnel engine.
+ * @param id - tunnel id to edit.
+ * @param patch - fields to change; omitted fields keep their current value.
+ * @returns the resulting tunnel and whether it was rebuilt.
+ */
+export async function updateTunnel(
+  engine: TunnelEngine,
+  id: string,
+  patch: TunnelUpdate,
+): Promise<TunnelUpdateResult> {
+  const existing = engine.tunnels.get(id)
+  if (existing === undefined) throw new Error(`tunnel '${id}' not found`)
+
+  const remoteHost = patch.remoteHost ?? existing.info.remoteHost
+  const remotePort = patch.remotePort ?? existing.info.remotePort
+  const localPort = patch.localPort ?? existing.info.localPort
+  if (!Number.isInteger(remotePort) || remotePort < 1 || remotePort > 65535) {
+    throw new Error('remotePort must be an integer in 1..65535')
+  }
+  if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) {
+    throw new Error('localPort must be an integer in 1..65535')
+  }
+  if (remoteHost.trim() === '') throw new Error('remoteHost must not be empty')
+
+  const routingChanged = remoteHost !== existing.info.remoteHost
+    || remotePort !== existing.info.remotePort
+    || localPort !== existing.info.localPort
+
+  const name = patch.name === undefined ? existing.info.name : textPatch(patch.name)
+  const description = patch.description === undefined ? existing.info.description : textPatch(patch.description)
+
+  if (!routingChanged) {
+    const info: TunnelInfo = { ...existing.info }
+    // Rebuilt rather than mutated so the returned object never aliases the
+    // record's previous info (a caller holding the old snapshot keeps it).
+    if (name === undefined) delete info.name
+    else info.name = name
+    if (description === undefined) delete info.description
+    else info.description = description
+    existing.info = info
+    return { tunnel: info, restarted: false }
+  }
+
+  const alias = existing.alias
+  stopTunnel(engine, id)
+  try {
+    const tunnel = await startTunnel(engine, alias, { remotePort, remoteHost, localPort, name, description })
+    return { tunnel, restarted: true }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new Error(`tunnel could not be rebuilt: ${reason} (the previous forward was closed)`)
+  }
+}
+
 /** Stop one tunnel (closes the listener, live sockets, and the pinned connection). */
 export function stopTunnel(engine: TunnelEngine, id: string): boolean {
   const tunnel = engine.tunnels.get(id)

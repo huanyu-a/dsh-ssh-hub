@@ -33,6 +33,7 @@ import { ClusterTab } from './src/client/panel/ClusterTab.tsx'
 import { DeployTab } from './src/client/panel/DeployTab.tsx'
 import { LogsTab } from './src/client/panel/LogsTab.tsx'
 import { HostFormDialog } from './src/client/panel/HostFormDialog.tsx'
+import { TunnelEditDialog } from './src/client/panel/TunnelEditDialog.tsx'
 import { SshPanel } from './src/client/panel/SshPanel.tsx'
 import css from './src/client/panel/panel.module.css'
 
@@ -59,6 +60,26 @@ const TABS = {
   deploy: [DeployTab, { api, active: true }],
   logs: [LogsTab, { api, active: true }],
   dialog: [HostFormDialog, { api, editing: null, onClose: () => {}, onSaved: () => {} }],
+  // Both halves of the tunnel editor: an owned forward (routing fields + the
+  // rebuild warning) and an external one (name/remark only), because which
+  // fields appear is the whole point of that dialog.
+  'tunnel-edit': [TunnelEditDialog, {
+    api,
+    tunnel: {
+      id: 't1', alias: 'tencent', localPort: 7863, remoteHost: '127.0.0.1', remotePort: 7863,
+      state: 'forwarding', startedAt: Date.now(), name: 'workbuddy-api', description: 'panel backend',
+    },
+    onClose: () => {}, onSaved: () => {},
+  }],
+  'tunnel-remark': [TunnelEditDialog, {
+    api,
+    tunnel: {
+      id: 'ext-38232-0', alias: 'tencent', localPort: 7863, remoteHost: '127.0.0.1', remotePort: 7863,
+      state: 'forwarding', startedAt: 0, source: 'external', pid: 38232, kind: 'local', live: true,
+      name: 'workbuddy-api', description: 'panel backend', customRemark: true,
+    },
+    onClose: () => {}, onSaved: () => {},
+  }],
 }
 
 // The whole panel shell, including its own header and tab strip. The per-tab

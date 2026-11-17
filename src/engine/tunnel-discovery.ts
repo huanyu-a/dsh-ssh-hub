@@ -342,6 +342,7 @@ export async function discoverExternalTunnels(
         kind: forward.kind,
         name: remark?.name ?? conf?.name,
         description: remark?.description ?? conf?.description,
+        customRemark: remark !== undefined,
       })
     }
   }
