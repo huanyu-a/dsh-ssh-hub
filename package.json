@@ -115,7 +115,8 @@
     "esbuild": true
   },
   "overrides": {
-    "partial-json": "0.1.7"
+    "partial-json": "0.1.7",
+    "@deepseek-ai/node-addon-system": "0.1.2"
   },
   "files": [
     "lib/**/*.js",
