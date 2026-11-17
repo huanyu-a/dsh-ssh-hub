@@ -1,10 +1,29 @@
 {
   "name": "dsh-ssh-hub",
-  "version": "0.1.8",
-  "private": true,
+  "version": "0.1.9",
   "description": "Server fleet operations hub for DeepSeek Harness: SSH transport (inherited from @linxin666/dsh-ssh) plus inspection, metrics/alerting, deployment orchestration, cross-host log search, credential hardening and audit trail.",
   "icon": "./icon.svg",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/huanyu-a/dsh-ssh-hub.git"
+  },
+  "homepage": "https://github.com/huanyu-a/dsh-ssh-hub#readme",
+  "bugs": {
+    "url": "https://github.com/huanyu-a/dsh-ssh-hub/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "ssh",
+    "fleet",
+    "inspection",
+    "alerting",
+    "deployment",
+    "sre",
+    "ops"
+  ],
   "type": "module",
   "main": "lib/index.js",
   "types": "./lib/types/index.d.ts",
