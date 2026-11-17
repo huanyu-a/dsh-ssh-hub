@@ -168,6 +168,15 @@ export interface TunnelInfo {
   /** Remarks / note about what project or service this tunnel serves. */
   description?: string
   /**
+   * True when the displayed name came from `~/.ssh/forwards.conf` rather than
+   * from the tunnel record itself. The editor needs the difference: saving an
+   * untouched inherited name back as an explicit one would freeze a field the
+   * config file still owns.
+   */
+  nameInherited?: boolean
+  /** Same as {@link nameInherited}, for the description. */
+  descriptionInherited?: boolean
+  /**
    * True when the name/description came from a stored user remark rather than
    * `~/.ssh/forwards.conf`. The panel marks these so a stale automatic name is
    * not mistaken for one the operator typed.

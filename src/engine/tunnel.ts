@@ -164,6 +164,10 @@ export function listTunnels(engine: TunnelEngine): TunnelInfo[] {
       ...tunnel.info,
       name: tunnel.info.name ?? conf?.name,
       description: tunnel.info.description ?? conf?.description,
+      // The editor pre-fills what the row displays, so it has to know which of
+      // those values is a fallback it must not write back as a decision.
+      nameInherited: tunnel.info.name === undefined && conf?.name !== undefined,
+      descriptionInherited: tunnel.info.description === undefined && conf?.description !== undefined,
     }
   })
 }

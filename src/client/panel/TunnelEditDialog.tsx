@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import type { SshApi } from '../api.ts'
 import type { TunnelInfo } from '../../protocol.ts'
 import { errorMessage, tt } from './helpers.ts'
+import { tunnelTextPatch } from './tunnel-form.ts'
 import css from './panel.module.css'
 
 /** Tunnel edit dialog props. */
@@ -97,11 +98,14 @@ export function TunnelEditDialog({ api, tunnel, onClose, onSaved }: TunnelEditDi
           : tt('tunnel.remarkSaved'))
         return
       }
+      // Not the raw form: a name or remark inherited from forwards.conf must
+      // stay inherited, or the file silently loses the ability to rename it.
+      const text = tunnelTextPatch(tunnel, form)
       const result = await api.updateTunnel(tunnel.id, {
         // Always sent: an empty string is the explicit clear, so saving the
         // form can both set and remove a name.
-        name: form.name.trim(),
-        description: form.description.trim(),
+        name: text.name,
+        description: text.description,
         remoteHost: form.remoteHost.trim(),
         remotePort,
         localPort,
