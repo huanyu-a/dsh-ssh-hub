@@ -143,8 +143,19 @@ push 到 master
    │
    ├─ 同一次运行里：打 tag、建 Release、写 CHANGELOG.md
    │
-   └─ 同一次运行里：npm ci → npm run check → npm publish --provenance
+   └─ 同一次运行里：npm ci → typecheck/test/build/verify/pack → npm publish
 ```
+
+> **CI 里的门禁少一项**：`verify:contrast` 要读**已安装的** DSH 主题样式表，裸 runner 没有；
+> 脚本自己也拒绝在没有测量时说"通过"。所以它留作本地门禁，CI 跑其余全部项目。
+>
+> **暂时没有 `--provenance`**：npm 的 sigstore 证明要求源仓库是公开的，私有仓库会被
+> `E422` 拒绝。可信发布本身不依赖它（OIDC 身份校验照做）。仓库转公开时把那个标志加回去即可，
+> 其余不用改。
+>
+> **失败后重发靠 `workflow_dispatch`**：发版失败时 tag 已经打好了，重跑 push 任务只会
+> 再次检出同一个提交。`gh workflow run release.yml -f tag=v0.2.1` 会把那个 tag 拿来发布——
+> 必须走同一个 workflow 文件，因为 npm 的可信发布配置是按**文件名** `release.yml` 绑定的。
 
 为什么发布和 release 在**同一个 workflow** 里：release-please 用工作流自己的
 `GITHUB_TOKEN` 建 Release，而 `GITHUB_TOKEN` 触发的事件**不会再启动别的 workflow**。
