@@ -165,6 +165,11 @@ GitHub 身份（trusted publishing），仓库里不存在任何长期有效的 
 本地依然可以手动发（比如修 CI 的时候），但那样 `package.json` 的版本会被
 release-please 的 manifest 覆盖回来——它才是版本号的唯一来源。
 
+> **一处必须存在的 `overrides`**：依赖树里的 `@earendil-works/pi-ai` 把
+> `partial-json` 钉在一个**从未发布过**的 `0.1.8`（registry 上最高只有 `0.1.7`），
+> 于是干净检出跑 `npm ci` 会以 `E404` 失败。`package.json` 里的 `overrides` 把它落到
+> `0.1.7`，只为让 CI 装得起来——它不改变运行时，本插件也不引用这两个包。
+
 ---
 
 ## 配置
