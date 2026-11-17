@@ -1,6 +1,6 @@
 {
   "name": "dsh-ssh-hub",
-  "version": "0.2.1",
+  "version": "0.2.0",
   "description": "Server fleet operations hub for DeepSeek Harness: SSH transport (inherited from @linxin666/dsh-ssh) plus inspection, metrics/alerting, deployment orchestration, cross-host log search, credential hardening and audit trail.",
   "icon": "./icon.svg",
   "license": "Apache-2.0",
