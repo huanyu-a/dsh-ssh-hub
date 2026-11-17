@@ -12,13 +12,22 @@
 # updated on every push. Merging that PR is the only manual step, and it is
 # deliberate: npm versions are immutable once published, so the last moment a
 # mistake is still cheap is the merge button.
+#
+# `workflow_dispatch` with a tag exists for the one case the push path cannot
+# cover: a release whose publish failed. The tag is already cut at that point,
+# so re-running the push job would check out the same broken commit. Dispatching
+# publishes an existing tag through this same file — which matters, because the
+# npm trusted-publisher entry is scoped to the workflow filename `release.yml`.
 name: release
 
 on:
   push:
     branches: [master]
-  # Lets the release PR be regenerated on demand after a config change.
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to publish (empty = just refresh the release PR)'
+        required: false
 
 permissions:
   contents: write
@@ -30,6 +39,7 @@ concurrency:
 
 jobs:
   release-please:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       release-created: ${{ steps.release.outputs.release_created }}
@@ -43,8 +53,13 @@ jobs:
 
   publish:
     needs: release-please
-    # Only when the release PR was merged in this run, i.e. a new tag exists.
-    if: needs.release-please.outputs.release-created == 'true'
+    # Either the release PR was merged in this run (a new tag exists), or an
+    # operator pointed a dispatch at an existing tag.
+    if: |
+      always() && (
+        (github.event_name == 'push' && needs.release-please.outputs.release-created == 'true') ||
+        (github.event_name == 'workflow_dispatch' && inputs.tag != '')
+      )
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,6 +68,10 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # A dispatch publishes the tag it names; a push publishes what it just
+          # tagged, which is the commit this run was started for.
+          ref: ${{ inputs.tag || github.sha }}
 
       - uses: actions/setup-node@v4
         with:
@@ -67,11 +86,31 @@ jobs:
 
       - run: npm ci
 
-      # The same gate as a local `npm run check`. A release that cannot pass it
-      # is not published, and `pack:check` proves the tarball matches the build.
-      - run: npm run check
+      # The same gate as a local `npm run check`, except verify:contrast.
+      # That one reads the theme stylesheet out of an *installed* DeepSeek
+      # Harness, which a bare runner does not have; it refuses to report a pass
+      # it could not measure, so it stays a local gate. Everything below runs
+      # anywhere.
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - run: npm run verify:client
+      - run: npm run pack:check
+
+      - name: Skip if this version is already on npm
+        id: probe
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if npm view "dsh-ssh-hub@${version}" version >/dev/null 2>&1; then
+            echo "dsh-ssh-hub@${version} is already published — nothing to do."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish to npm
+        if: steps.probe.outputs.skip == 'false'
         # --provenance writes a signed statement linking the tarball to this
         # commit and workflow run, which the npm page shows.
         run: npm publish --provenance --access public
