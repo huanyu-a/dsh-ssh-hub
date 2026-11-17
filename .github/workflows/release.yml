@@ -111,9 +111,12 @@ jobs:
 
       - name: Publish to npm
         if: steps.probe.outputs.skip == 'false'
-        # --provenance writes a signed statement linking the tarball to this
-        # commit and workflow run, which the npm page shows.
-        run: npm publish --provenance --access public
+        # No --provenance: the registry rejects the attestation with E422
+        # ("only public source repositories are supported") while this
+        # repository is private. Trusted publishing does not depend on it —
+        # the OIDC identity check happens either way. Add the flag back the
+        # day the repository goes public; nothing else needs to change.
+        run: npm publish --access public
         # If you would rather authenticate with a token than with trusted
         # publishing, add `NPM_TOKEN` to the repository secrets and uncomment:
         # env:
