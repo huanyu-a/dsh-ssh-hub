@@ -1,0 +1,81 @@
+# Version bump, changelog, tag and npm publish — all driven by what actually
+# landed on master.
+#
+# Why one workflow and not two: a GitHub Release created by release-please uses
+# the workflow's own GITHUB_TOKEN, and events caused by GITHUB_TOKEN never start
+# another workflow. A separate "on: release: published" publisher would look
+# correct and silently never run. Publishing therefore lives in this file,
+# behind `release_created`, in the same run that makes the release.
+#
+# The version is never typed by hand. release-please reads Conventional Commits
+# since the last tag, computes the next semver, and keeps a single release PR
+# updated on every push. Merging that PR is the only manual step, and it is
+# deliberate: npm versions are immutable once published, so the last moment a
+# mistake is still cheap is the merge button.
+name: release
+
+on:
+  push:
+    branches: [master]
+  # Lets the release PR be regenerated on demand after a config change.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release-created: ${{ steps.release.outputs.release_created }}
+      tag-name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - id: release
+        uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  publish:
+    needs: release-please
+    # Only when the release PR was merged in this run, i.e. a new tag exists.
+    if: needs.release-please.outputs.release-created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # npm trusted publishing: the registry verifies this run's OIDC identity
+      # instead of a long-lived token living in a repo secret.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # The Node image ships an npm older than the trusted-publishing support
+      # (11.5+). Without this the publish authenticates as a stranger and 404s.
+      - name: Use an npm that speaks OIDC
+        run: npm install --global npm@^11.6.0
+
+      - run: npm ci
+
+      # The same gate as a local `npm run check`. A release that cannot pass it
+      # is not published, and `pack:check` proves the tarball matches the build.
+      - run: npm run check
+
+      - name: Publish to npm
+        # --provenance writes a signed statement linking the tarball to this
+        # commit and workflow run, which the npm page shows.
+        run: npm publish --provenance --access public
+        # If you would rather authenticate with a token than with trusted
+        # publishing, add `NPM_TOKEN` to the repository secrets and uncomment:
+        # env:
+        #   NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

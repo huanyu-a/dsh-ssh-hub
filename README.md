@@ -126,6 +126,47 @@ npm run check                  # typecheck + test + build + pack 校验
 
 ---
 
+## 发布
+
+**版本号不手写。** 它由 Conventional Commits 推导，由 CI 生成、CI 发布。
+
+流程只有四步，人只参与其中一步：
+
+```
+push 到 master
+   │
+   ├─ release-please 读上一条 tag 以来的提交
+   │     feat:  → minor    fix: → patch    feat!: / BREAKING CHANGE → major
+   │     维护一个「chore: release X.Y.Z」PR（每次 push 自动更新内容）
+   │
+   ├─ 你合并那个 PR          ← 唯一的人工决定
+   │
+   ├─ 同一次运行里：打 tag、建 Release、写 CHANGELOG.md
+   │
+   └─ 同一次运行里：npm ci → npm run check → npm publish --provenance
+```
+
+为什么发布和 release 在**同一个 workflow** 里：release-please 用工作流自己的
+`GITHUB_TOKEN` 建 Release，而 `GITHUB_TOKEN` 触发的事件**不会再启动别的 workflow**。
+拆成两个文件、用 `on: release: published` 触发发布，看上去完全正确，实际上永远不会跑。
+
+为什么保留「合并 PR」这一步：npm 的版本是**不可变的**，发出去就不能覆盖。
+合并按钮是错误还来得及挽回的最后一个时刻，把它去掉换来的是「自动发错版本」。
+
+为什么用 OIDC 而不是 token：`id-token: write` 让 registry 直接校验这次运行的
+GitHub 身份（trusted publishing），仓库里不存在任何长期有效的 npm 凭据。
+一次 token 过期就让本地发布 401 的坑，在 CI 里不应该重演。
+
+> 首次启用需要在 npmjs.com 的包设置里添加 Trusted Publisher：
+> Publisher 选 GitHub Actions，Organization/User `huanyu-a`，Repository `dsh-ssh-hub`，
+> Workflow 文件名 `release.yml`。不想配这个就把 npm token 存成仓库 secret `NPM_TOKEN`，
+> 并把 `release.yml` 里 `npm publish` 那一步的 `env` 注释打开。
+
+本地依然可以手动发（比如修 CI 的时候），但那样 `package.json` 的版本会被
+release-please 的 manifest 覆盖回来——它才是版本号的唯一来源。
+
+---
+
 ## 配置
 
 | 字段 | 默认 | 说明 |
